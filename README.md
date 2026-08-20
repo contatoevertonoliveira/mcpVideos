@@ -73,7 +73,7 @@ Comandos úteis:
 ```bash
 ruff check .            # lint
 mypy app                # typecheck
-pytest                  # testes (não exigem Postgres/Redis reais)
+pytest                  # testes de unidade (não exigem infra)
 ```
 
 ### Migrations (Alembic)
@@ -84,7 +84,24 @@ alembic revision --autogenerate -m "descricao da mudanca"
 alembic upgrade head
 ```
 
-Nenhuma entidade de domínio existe ainda na Fase 01 (Documento 03, seção 110) — a primeira migration real chega na Fase 02.
+Rodando fora do Docker, aponte `DATABASE_URL` para `localhost` em vez do hostname interno `postgres` (que só existe dentro da rede do `docker compose`), por exemplo:
+
+```bash
+DATABASE_URL=postgresql+psycopg2://postgres:postgres@localhost:5432/mcp_videos alembic upgrade head
+```
+
+### Testes de integração (repositories/services)
+
+A partir da Fase 02, os testes de repository/service rodam contra um PostgreSQL real (Documento 10, seção 49 — testar DB/repositories de verdade, não mockado). Cada teste roda dentro de uma transação que é sempre revertida no final, então não é preciso limpar dados manualmente.
+
+Crie o banco de teste uma vez (com o `docker compose` já rodando):
+
+```bash
+docker exec mcp_videos-postgres-1 psql -U postgres -c "CREATE DATABASE mcp_videos_test;"
+DATABASE_URL=postgresql+psycopg2://postgres:postgres@localhost:5432/mcp_videos_test alembic upgrade head
+```
+
+Depois disso, `pytest` já aponta para `mcp_videos_test` em `localhost:5432` por padrão (ajustável via `TEST_DATABASE_URL`).
 
 ## Frontend (apps/web)
 

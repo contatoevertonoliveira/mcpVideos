@@ -8,9 +8,9 @@
 
 ## 1. Status Geral
 
-**Fase atual:** ✅ **Fase 01 — Project Foundation concluída e 100% validada**, incluindo `docker compose up` rodando de fato (Docker Desktop instalado pelo usuário nesta sessão). Todos os critérios de aceite do Documento 10 §7 confirmados: stack completa sobe, `/health`, `/health/db`, `/health/redis` respondem 200, frontend renderiza "Conectado" via fetch server-side real, worker Celery conecta ao Redis e fica `ready`, bucket MinIO criado no startup sem erro.
+**Fase atual:** ✅ **Fase 02 — Core Domain & Database implementada e validada** (models, schemas, repositories, services, migration aplicada num Postgres real, 25 testes passando incluindo o teste obrigatório de tenant isolation). Ver seção 4.2 para o relatório completo. Fase 01 permanece 100% validada (seção 4.1).
 
-**Próximo passo:** iniciar a **Fase 02 — Core Domain & Database** (organizations, users, organization_members, channels, audit_logs, feature_flags, jobs).
+**Próximo passo:** commitar a Fase 02 (aguardando confirmação do usuário) e depois iniciar a **Fase 03 — Authentication & Security**.
 
 ---
 
@@ -84,7 +84,12 @@ Nenhuma fase foi iniciada.
 - Hierarquia de erros (`app/core/exceptions.py`): `ApplicationError` com `http_status` fixo por classe e `code` de negócio sobrescrevível por instância; resposta no formato `{"error": {"code", "message"}}` do Documento 02 §59.
 - Worker Celery reutiliza o código/imagem de `apps/api` (ver `services/worker/README.md`) — decisão a revisitar nas Fases 13-15.
 - `CLAUDE.md` criado na raiz apontando para este arquivo e para os documentos mestres.
-- Repositório Git inicializado na raiz (`git init`) — **nenhum commit foi criado ainda**, aguardando pedido explícito do usuário.
+- Repositório Git inicializado na raiz (`git init`), remote `origin` = `https://github.com/contatoevertonoliveira/mcpVideos.git`, branch `main`.
+- Porta host da `api` fixada em `8002` (não `8000`) para não colidir com outros projetos locais do usuário — porta interna do container continua `8000`.
+- Enums de domínio: sempre `native_enum=False` (VARCHAR + CHECK, não `ENUM` nativo do Postgres) — evita `ALTER TYPE ADD VALUE` a cada novo status em fases futuras.
+- Senhas: hashing via `bcrypt` (`app/security/password.py`). E-mail validado via `pydantic[EmailStr]` + `email-validator`.
+- Repositórios: duas variantes em `app/repositories/base.py` — `BaseRepository` (sem escopo, só para `Organization`/`User`, que são raízes do tenant) e `TenantScopedRepository` (exige `organization_id` em toda leitura, sem exceção).
+- Testes de repository/service rodam contra PostgreSQL real (não mockado) desde a Fase 02, cada um dentro de uma transação revertida ao final — ver `apps/api/tests/conftest.py` e `README.md`.
 
 ### 4.1 Fase 01 — Relatório de Conclusão
 
@@ -126,9 +131,41 @@ bash infra/scripts/smoke-test.sh
 ```
 Ou sem Docker, rodando cada app localmente (ver `README.md`).
 
+### 4.2 Fase 02 — Relatório de Conclusão
+
+**Implementado:**
+- **7 entidades** (Documento 03 §111): `organizations`, `users`, `organization_members`, `channels`, `jobs`, `feature_flags`, `audit_logs`. Mixins reutilizáveis em `app/db/mixins.py` (`UUIDPrimaryKeyMixin`, `TimestampMixin`, `SoftDeleteMixin`, `OrganizationScopedMixin`). Enums centralizados em `app/models/enums.py`.
+- **Migration** `a2160f18014a_core_domain.py` (Alembic autogenerate) — cria as 7 tabelas, índices e constraints (unique `organizations.slug`, `users.email`, `organization_members(org_id,user_id)`, índice único parcial `channels(org_id,platform,external_channel_id) WHERE external_channel_id IS NOT NULL`).
+- **Repositories** (`app/repositories/`): `base.py` com `BaseRepository`/`TenantScopedRepository` genéricos + um por entidade (`organization`, `user`, `organization_member`, `channel`, `job`, `audit_log`, `feature_flag`).
+- **Schemas Pydantic** (`app/schemas/`): Create/Read para organization, user, organization_member, channel, job.
+- **Services** (`app/services/`), exatamente os 5 nomeados pelo Documento 10 F02: `OrganizationService` (cria organização com slug único + `add_member`), `UserService` (cria usuário com senha hasheada), `ChannelService` (cria canal "placeholder", sempre `automation_mode=assisted`), `JobService` (ciclo de vida pending→running→completed/failed), `AuditService` (grava audit log).
+- **Não implementado** (fora de escopo por definição): conexão OAuth real de canal (Fase 04), login/sessão (Fase 03) — `UserService` só cria o usuário, não autentica.
+- Nenhum endpoint HTTP novo exposto ainda: como não há autenticação (Fase 03), expor `POST /organizations` ou `POST /users` publicamente seria um risco de segurança sem necessidade — a camada de serviço já está pronta para a Fase 03 chamar.
+
+**Validado nesta sessão (com Postgres real, via Docker):**
+- `alembic upgrade head` na dev DB (`mcp_videos`) e num banco limpo (`mcp_videos_test`), incluindo ciclo `upgrade → downgrade → upgrade` sem erro (Documento 10 §36).
+- 25 testes (pytest) rodando contra PostgreSQL real (não mockado): CRUD de cada service, e um arquivo dedicado `test_tenant_isolation.py` provando que a Org A nunca enxerga recursos da Org B (canal, job, membership) — o critério de aceite explícito da Fase 02.
+- `ruff check .` e `mypy app` limpos (60 arquivos).
+- Rebuild das imagens Docker (`api`/`worker`) com as novas dependências (`bcrypt`, `email-validator`) e stack revalidada com `smoke-test.sh` — tudo OK.
+- `.github/workflows/ci.yml` atualizado com um serviço `postgres` (16-alpine) + `alembic upgrade head` antes do `pytest`, para o CI também rodar os testes de integração.
+
+**Pendências / Known Limitations:**
+- `docs/database.md` criado com ERD Mermaid e decisões de modelagem — manter atualizado a cada fase que mudar o schema (Documento 03 §133).
+- `channels.status` (`pending|active|disabled`) foi uma decisão desta fase — o Documento 03 não especifica os valores exatos.
+- Autorização (quem pode fazer o quê) ainda não existe — isso é `AuthorizationService`, Fase 03.
+- Testes de repository/service agora **exigem PostgreSQL real** (`mcp_videos_test`), diferente da Fase 01 onde nada dependia de infra. Documentado no `README.md`.
+
+**Como validar:**
+```bash
+cd apps/api
+DATABASE_URL=postgresql+psycopg2://postgres:postgres@localhost:5432/mcp_videos alembic upgrade head
+pytest -v
+```
+(requer `docker compose up -d` rodando para o Postgres em `localhost:5432`, e o banco `mcp_videos_test` criado uma vez — ver `README.md`).
+
 ## 5. Pendências / Perguntas em Aberto
 
-- Nenhuma pendência bloqueante — Fase 01 commitada e enviada para o GitHub (ver seção 6).
+- Fase 02 implementada e validada nesta sessão — **ainda não commitada/enviada** (aguardando pedido explícito, igual fizemos na Fase 01).
 - Documento 10 (seção 137) sugere organizar os documentos em `/docs/master/` com slugs (`01-product-brief.md`, etc.) — não feito; usuário optou implicitamente por manter o padrão atual `Documento NN - Titulo.md` ao pedir para seguir direto para a Fase 01.
 - Ainda não definido: nome comercial do produto, provedor de IA/mídia real a integrar primeiro na Fase 13 (Documento 10 §71 pede benchmark atualizado antes de decidir — não assumir Higgsfield/Kie/fal.ai/WaveSpeed/Replicate como escolha final), moeda/plano de billing.
 
@@ -162,8 +199,18 @@ Ou sem Docker, rodando cada app localmente (ver `README.md`).
 - Rodei `docker compose up --build -d` de verdade: as 6 imagens buildaram, todos os containers subiram (`postgres`/`redis`/`minio` chegaram a `healthy`). Rodei `infra/scripts/smoke-test.sh`: os 4 checks passaram. Confirmei via `curl` que o frontend mostra "Conectado" (fetch real via rede Docker) e via logs que o worker Celery conectou ao Redis (`ready`) e a API criou o bucket MinIO no startup sem erro.
 - **Fase 01 agora está 100% validada**, incluindo o critério de aceite que antes só tinha sido checado estaticamente.
 - Usuário pediu para commitar e dar push. Commit único `b3041ae` ("feat(F01): project foundation", 107 arquivos) criado e enviado para `main` em `https://github.com/contatoevertonoliveira/mcpVideos.git`. Working tree limpo, branch `main` rastreando `origin/main`.
-- Usuário pediu para não usar a porta 8000 no host (outro projeto já ocupa essa porta). Porta do host da `api` alterada para **8002** (`API_PORT:-8002` em `docker-compose.yml`, `.env.example`, `.env`, `infra/scripts/smoke-test.sh`, `README.md`); a porta **interna** do container continua 8000 (não afeta a comunicação `web` → `api` via rede Docker). Stack recriado (`docker compose up -d`) e revalidado com `smoke-test.sh` + `curl` no `localhost:3000` — tudo OK na nova porta. Mudança ainda **não commitada**.
+- Usuário pediu para não usar a porta 8000 no host (outro projeto já ocupa essa porta). Porta do host da `api` alterada para **8002** (`API_PORT:-8002` em `docker-compose.yml`, `.env.example`, `.env`, `infra/scripts/smoke-test.sh`, `README.md`); a porta **interna** do container continua 8000 (não afeta a comunicação `web` → `api` via rede Docker). Stack recriado (`docker compose up -d`) e revalidado com `smoke-test.sh` + `curl` no `localhost:3000` — tudo OK na nova porta. Commit `ed9b437` ("fix(F01): move API host port to 8002...") criado e enviado para `main`.
 - Próximo passo: iniciar a Fase 02 — Core Domain & Database.
+
+### 2026-08-20 — Fase 02 — Core Domain & Database (mesma data, sessão seguinte)
+- Usuário pediu para seguir para a Fase 02.
+- Criadas as 7 entidades (organizations, users, organization_members, channels, jobs, feature_flags, audit_logs), repositories (com `TenantScopedRepository` genérico exigindo `organization_id` sempre), schemas Pydantic, e os 5 services nomeados pelo Documento 10 (Organization/User/Channel/Job/Audit).
+- Migration `a2160f18014a` gerada via `alembic revision --autogenerate`, aplicada na dev DB e validada com ciclo `upgrade → downgrade → upgrade` num banco limpo (`mcp_videos_test`).
+- Criado banco `mcp_videos_test` no Postgres do Docker; testes de integração agora rodam contra Postgres real (25 testes, incluindo `test_tenant_isolation.py` — o critério de aceite obrigatório da fase, provando que Org A nunca acessa recurso de Org B).
+- `ruff`/`mypy` limpos. Rebuild das imagens Docker (novas deps `bcrypt`/`email-validator`) e stack revalidado com `smoke-test.sh`.
+- `.github/workflows/ci.yml` ganhou um serviço Postgres para rodar os testes de integração no CI também.
+- Criado `docs/database.md` com ERD Mermaid (Documento 03 §133).
+- Próximo passo: usuário decide se commita/envia a Fase 02 agora.
 
 ---
 
