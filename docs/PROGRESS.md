@@ -8,9 +8,9 @@
 
 ## 1. Status Geral
 
-**Fase atual:** ✅ **Fase 02 — Core Domain & Database implementada e validada** (models, schemas, repositories, services, migration aplicada num Postgres real, 25 testes passando incluindo o teste obrigatório de tenant isolation). Ver seção 4.2 para o relatório completo. Fase 01 permanece 100% validada (seção 4.1).
+**Fase atual:** ✅ **Fase 03 — Authentication & Security implementada e validada de ponta a ponta**, inclusive testada manualmente no navegador (registro → dashboard → logout → login → proteção de rota → rate limiting). Ver seção 4.3 para o relatório completo. Fases 01 e 02 permanecem 100% validadas (seções 4.1 e 4.2).
 
-**Próximo passo:** commitar a Fase 02 (aguardando confirmação do usuário) e depois iniciar a **Fase 03 — Authentication & Security**.
+**Próximo passo:** commitar a Fase 03 (aguardando confirmação do usuário) e depois iniciar a **Fase 04 — YouTube Integration**.
 
 ---
 
@@ -90,6 +90,11 @@ Nenhuma fase foi iniciada.
 - Senhas: hashing via `bcrypt` (`app/security/password.py`). E-mail validado via `pydantic[EmailStr]` + `email-validator`.
 - Repositórios: duas variantes em `app/repositories/base.py` — `BaseRepository` (sem escopo, só para `Organization`/`User`, que são raízes do tenant) e `TenantScopedRepository` (exige `organization_id` em toda leitura, sem exceção).
 - Testes de repository/service rodam contra PostgreSQL real (não mockado) desde a Fase 02, cada um dentro de uma transação revertida ao final — ver `apps/api/tests/conftest.py` e `README.md`.
+- Autenticação: sessões DB-backed com token opaco (hash SHA-256 persistido, nunca o token puro) — não JWT stateless, para permitir revogação real (Documento 09 §6). `AuthService` (`app/services/auth.py`) cobre register/login/logout/switch-organization.
+- Autorização: `AuthorizationService` + `Permission` (`app/domain/permissions.py`) — mapeamento fixo role→permissão (owner/admin/editor/viewer), granularidade completa por recurso fica para o futuro (Documento 09 §17).
+- Registro cria organização automaticamente e o usuário vira `owner` dela — sem fluxo de "entrar em organização existente" ainda.
+- Rate limiting de login via Redis (`app/security/rate_limit.py`): 5 tentativas/e-mail em 15 min, depois HTTP 429.
+- Frontend: sessão fica num cookie `httpOnly` (`mcp_session`), setado por Server Actions após chamar a API — nunca exposta ao JS do cliente. `proxy.ts` (renomeado de `middleware.ts` no Next 16) faz o redirect rápido de rota protegida; a validação real do token acontece sempre no servidor, olhando a API.
 
 ### 4.1 Fase 01 — Relatório de Conclusão
 
@@ -163,9 +168,43 @@ pytest -v
 ```
 (requer `docker compose up -d` rodando para o Postgres em `localhost:5432`, e o banco `mcp_videos_test` criado uma vez — ver `README.md`).
 
+### 4.3 Fase 03 — Relatório de Conclusão
+
+**Implementado:**
+- **Entidade nova:** `sessions` (modelo `UserSession` — nome escolhido para não colidir com `sqlalchemy.orm.Session`, usado em todo o resto do código). Campos exatamente conforme Documento 09 §6. Migration `373efef0edb5`.
+- **`app/security/tokens.py`:** token opaco de alta entropia (`secrets.token_urlsafe(32)`); só o hash SHA-256 é persistido.
+- **`app/services/auth.py` (`AuthService`):** `register` (cria user + org + membership OWNER + sessão + audit log), `login` (verifica senha, cria sessão, usa a primeira organização do usuário como contexto ativo, audit log), `logout` (revoga sessão, audit log), `get_valid_session` (rejeita token inválido/expirado/revogado), `switch_organization` (exige ser membro), `revoke_all_sessions` (pronto para um futuro "sair de todos os dispositivos").
+- **`app/domain/permissions.py` + `app/services/authorization.py`:** `Permission` enum e `AuthorizationService.require_permission()` — mapeamento fixo role→permissões (Documento 09 §12-17).
+- **`app/api/deps.py`:** dependencies FastAPI compostas — `get_bearer_token`, `get_current_session`, `get_current_user`, `get_current_organization_id`, `require_permission(permission)` (factory) — para qualquer endpoint futuro proteger com uma linha.
+- **Endpoints** (`/api/v1/auth/*`): `POST /register`, `POST /login` (com rate limit), `POST /logout`, `GET /me`, `POST /organization` (trocar organização ativa).
+- **Rate limiting:** `app/security/rate_limit.py`, Redis, 5 tentativas/e-mail/15min → 429.
+- **Fix de correção encontrado via teste:** `get_db()` (`app/db/session.py`) não fazia `commit()` — funcionava por acidente nas Fases 01-02 porque nenhum endpoint escrevia dados ainda. Corrigido para `commit()` no sucesso / `rollback()` na exceção.
+- **Fix de correção encontrado via teste:** `request.client.host` do FastAPI podia não ser um IP válido (ex.: `"testclient"` do TestClient, ou proxies mal configurados em produção) e quebrava o insert na coluna `INET`. Agora validado com `ipaddress.ip_address()` antes de gravar, com fallback `None`.
+- **Frontend** (`apps/web`): `/login`, `/register` (Server Actions + `useActionState` para exibir erro), `/dashboard` (Authenticated Shell: usuário, organização ativa, lista de organizações, botão sair). Sessão num cookie `httpOnly` `mcp_session` setado só em Server Actions. `proxy.ts` (Next 16 renomeou `middleware.ts` → `proxy.ts`) redireciona `/dashboard` sem sessão → `/login`, e `/login`/`/register` com sessão → `/dashboard`.
+- **Não implementado** (fora de escopo por definição): MFA (Documento 09 §8, opcional), convite de membros para organização existente, granularidade completa de permissões por recurso, "logout de todos os dispositivos" na UI (a capacidade existe no service).
+
+**Validado nesta sessão:**
+- 60 testes de backend (pytest) contra Postgres+Redis reais: `test_auth_service.py`, `test_authorization_service.py` (matriz completa role×permission), `test_rate_limit.py`, `test_auth_endpoints.py` (HTTP via TestClient), `test_deps.py` (wiring das dependencies do FastAPI). `ruff`/`mypy` limpos.
+- Migration validada com ciclo `upgrade → downgrade → upgrade` num banco limpo.
+- Stack Docker reconstruída (backend + frontend) e **testada manualmente no navegador de ponta a ponta**: cadastro → dashboard mostrando dados corretos → logout → tentativa de acessar `/dashboard` sem sessão (bloqueada, redirecionada) → login com senha errada (mensagem de erro exibida) → login correto → dashboard → acessar `/login` autenticado (redirecionado pro dashboard). Rate limit confirmado via `curl` (6ª tentativa errada = 429).
+- Frontend: `eslint`, `tsc --noEmit`, `vitest`, `next build` — todos limpos; todas as rotas novas aparecem como dinâmicas (`ƒ`), como esperado (usam cookies/redirect).
+
+**Pendências / Known Limitations:**
+- MFA, convite de membros, permissões granulares por recurso — adiados por definição de escopo (ver Documento 09 §8/§17).
+- `docs/database.md` atualizado com `sessions` no ERD e as decisões desta fase.
+
+**Como validar:**
+```bash
+cd apps/api && pytest -v
+cd apps/web && npm run lint && npm run typecheck && npm run test && npm run build
+docker compose up -d --build
+bash infra/scripts/smoke-test.sh
+# depois, testar manualmente: http://localhost:3000/register
+```
+
 ## 5. Pendências / Perguntas em Aberto
 
-- Fase 02 implementada e validada nesta sessão — **ainda não commitada/enviada** (aguardando pedido explícito, igual fizemos na Fase 01).
+- Fase 03 implementada e validada nesta sessão — **ainda não commitada/enviada** (aguardando pedido explícito, mesmo padrão das fases anteriores).
 - Documento 10 (seção 137) sugere organizar os documentos em `/docs/master/` com slugs (`01-product-brief.md`, etc.) — não feito; usuário optou implicitamente por manter o padrão atual `Documento NN - Titulo.md` ao pedir para seguir direto para a Fase 01.
 - Ainda não definido: nome comercial do produto, provedor de IA/mídia real a integrar primeiro na Fase 13 (Documento 10 §71 pede benchmark atualizado antes de decidir — não assumir Higgsfield/Kie/fal.ai/WaveSpeed/Replicate como escolha final), moeda/plano de billing.
 
@@ -211,6 +250,15 @@ pytest -v
 - `.github/workflows/ci.yml` ganhou um serviço Postgres para rodar os testes de integração no CI também.
 - Criado `docs/database.md` com ERD Mermaid (Documento 03 §133).
 - Próximo passo: usuário decide se commita/envia a Fase 02 agora.
+
+### 2026-08-20 — Fase 03 — Authentication & Security (mesma data, sessão seguinte)
+- Usuário pediu para seguir para a Fase 03.
+- Implementados: entidade `sessions` (`UserSession`), `AuthService` (register/login/logout/switch-organization/revoke-all), `AuthorizationService` + `Permission` (role→permissão fixo), dependencies FastAPI compostas (`app/api/deps.py`), endpoints `/api/v1/auth/*`, rate limiting de login via Redis.
+- Dois bugs reais encontrados e corrigidos graças aos testes: `get_db()` não commitava (funcionava por acaso até agora, sem endpoints que escreviam); `request.client.host` podia não ser um IP válido e quebrava o insert na coluna `INET` da tabela `sessions`.
+- Frontend: `/login`, `/register`, `/dashboard` (Server Actions, cookie `httpOnly`, `proxy.ts` para redirect de rota protegida).
+- 60 testes de backend passando; `ruff`/`mypy`/`eslint`/`tsc`/`vitest`/`next build` limpos.
+- Stack Docker reconstruída e o fluxo completo testado manualmente no navegador (registro → dashboard → logout → proteção de rota → erro de senha → login → redirect de página de auth já autenticado) e o rate limit confirmado via `curl`.
+- Próximo passo: usuário decide se commita/envia a Fase 03 agora.
 
 ---
 

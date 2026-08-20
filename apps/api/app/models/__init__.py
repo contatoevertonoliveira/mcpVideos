@@ -4,6 +4,7 @@ from app.models.feature_flag import FeatureFlag
 from app.models.job import Job
 from app.models.organization import Organization
 from app.models.organization_member import OrganizationMember
+from app.models.session import UserSession
 from app.models.user import User
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "Organization",
     "OrganizationMember",
     "User",
+    "UserSession",
 ]

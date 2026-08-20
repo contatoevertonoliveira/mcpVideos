@@ -44,3 +44,8 @@ class AuthorizationError(ApplicationError):
 class NotFoundError(ApplicationError):
     http_status = 404
     code = "NOT_FOUND"
+
+
+class RateLimitError(ApplicationError):
+    http_status = 429
+    code = "RATE_LIMITED"

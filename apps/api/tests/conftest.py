@@ -1,21 +1,20 @@
 import os
 
 import pytest
+import redis as redis_lib
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+from app.core.redis import get_redis_client
+from app.db.session import get_db
 from app.main import app
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
     "postgresql+psycopg2://postgres:postgres@localhost:5432/mcp_videos_test",
 )
-
-
-@pytest.fixture
-def client() -> TestClient:
-    return TestClient(app)
+TEST_REDIS_URL = os.environ.get("TEST_REDIS_URL", "redis://localhost:6379/15")
 
 
 @pytest.fixture(scope="session")
@@ -39,5 +38,39 @@ def db_session(db_engine):
         yield session
     finally:
         session.close()
-        transaction.rollback()
+        # A mid-test error (e.g. a request that hits an unhandled DB error)
+        # may already have ended this transaction via session.rollback().
+        if transaction.is_active:
+            transaction.rollback()
         connection.close()
+
+
+@pytest.fixture
+def redis_client():
+    """A separate Redis DB index than the app's defaults, flushed before
+    each test so login-rate-limit counters never leak between tests."""
+    client = redis_lib.from_url(TEST_REDIS_URL, decode_responses=True)
+    client.flushdb()
+    yield client
+    client.flushdb()
+
+
+@pytest.fixture
+def client(db_session, redis_client) -> TestClient:
+    """TestClient wired to the same per-test DB transaction and a scratch
+    Redis DB, so HTTP-level tests share state correctly with service-layer
+    assertions and never touch real dev data."""
+
+    def _get_db_override():
+        try:
+            yield db_session
+        except Exception:
+            db_session.rollback()
+            raise
+
+    app.dependency_overrides[get_db] = _get_db_override
+    app.dependency_overrides[get_redis_client] = lambda: redis_client
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.clear()
