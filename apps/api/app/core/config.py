@@ -37,6 +37,17 @@ class Settings(BaseSettings):
         default=["http://localhost:3000"], alias="CORS_ALLOW_ORIGINS"
     )
 
+    # Fase 04 - YouTube OAuth (Documento 02 sec. 47-48, Documento 09 sec. 20-25)
+    token_encryption_key: str = Field(
+        default="X4J5J7m8wvFPwDzElZ9yQuam8wyuBS0civoPSxYMtNo=", alias="TOKEN_ENCRYPTION_KEY"
+    )
+    youtube_fake_gateway: bool = Field(default=True, alias="YOUTUBE_FAKE_GATEWAY")
+    google_client_id: str = Field(default="", alias="GOOGLE_CLIENT_ID")
+    google_client_secret: str = Field(default="", alias="GOOGLE_CLIENT_SECRET")
+    google_redirect_uri: str = Field(
+        default="http://localhost:3000/oauth/youtube/callback", alias="GOOGLE_REDIRECT_URI"
+    )
+
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"

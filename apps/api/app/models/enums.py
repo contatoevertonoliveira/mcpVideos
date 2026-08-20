@@ -80,3 +80,35 @@ class AuditActorType(StrEnum):
     SYSTEM = "system"
     AGENT = "agent"
     WORKER = "worker"
+
+
+class ChannelConnectionProvider(StrEnum):
+    """Documento 03, secao 10. Unico provider inicial."""
+
+    GOOGLE_YOUTUBE = "google_youtube"
+
+
+class ChannelConnectionStatus(StrEnum):
+    """Documento 08, secao 137 (Channel Connection State)."""
+
+    CONNECTED = "connected"
+    NEEDS_REAUTHORIZATION = "needs_reauthorization"
+    SYNCING = "syncing"
+    ERROR = "error"
+    DISCONNECTED = "disconnected"
+
+
+class SyncType(StrEnum):
+    """Documento 03, secao 11."""
+
+    INITIAL = "initial"
+    FULL = "full"
+    INCREMENTAL = "incremental"
+    MANUAL = "manual"
+
+
+class SyncRunStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"

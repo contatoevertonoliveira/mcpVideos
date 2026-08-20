@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { logoutAction } from "@/app/(auth)/actions";
@@ -31,11 +32,16 @@ export default async function DashboardPage() {
             {activeOrganization?.organization_name ?? "Nenhuma organização selecionada"}
           </p>
         </div>
-        <form action={logoutAction}>
-          <Button type="submit" variant="outline">
-            Sair
+        <div className="flex items-center gap-2">
+          <Button render={<Link href="/channels" />} variant="outline">
+            Canais
           </Button>
-        </form>
+          <form action={logoutAction}>
+            <Button type="submit" variant="outline">
+              Sair
+            </Button>
+          </form>
+        </div>
       </header>
 
       <Card>

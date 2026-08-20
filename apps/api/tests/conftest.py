@@ -17,6 +17,13 @@ TEST_DATABASE_URL = os.environ.get(
 TEST_REDIS_URL = os.environ.get("TEST_REDIS_URL", "redis://localhost:6379/15")
 
 
+@pytest.fixture
+def anyio_backend() -> str:
+    """Runs @pytest.mark.anyio async tests (Fase 04's YouTubeGateway
+    coroutines) on asyncio only - no need for trio in this project."""
+    return "asyncio"
+
+
 @pytest.fixture(scope="session")
 def db_engine():
     """Assumes the schema is already migrated (`alembic upgrade head`

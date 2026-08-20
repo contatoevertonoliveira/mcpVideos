@@ -8,9 +8,9 @@
 
 ## 1. Status Geral
 
-**Fase atual:** ✅ **Fase 03 — Authentication & Security implementada e validada de ponta a ponta**, inclusive testada manualmente no navegador (registro → dashboard → logout → login → proteção de rota → rate limiting). Ver seção 4.3 para o relatório completo. Fases 01 e 02 permanecem 100% validadas (seções 4.1 e 4.2).
+**Fase atual:** ✅ **Fase 04 — YouTube Integration implementada e validada de ponta a ponta**, inclusive testada manualmente no navegador com o `FakeYouTubeGateway` (conectar → canal aparece → desconectar → reconectar sem duplicar). Ver seção 4.4 para o relatório completo. Fases 01-03 permanecem 100% validadas (seções 4.1-4.3).
 
-**Próximo passo:** commitar a Fase 03 (aguardando confirmação do usuário) e depois iniciar a **Fase 04 — YouTube Integration**.
+**Próximo passo:** commitar a Fase 04 (aguardando confirmação do usuário) e depois iniciar a **Fase 05 — Channel Importer**.
 
 ---
 
@@ -95,6 +95,10 @@ Nenhuma fase foi iniciada.
 - Registro cria organização automaticamente e o usuário vira `owner` dela — sem fluxo de "entrar em organização existente" ainda.
 - Rate limiting de login via Redis (`app/security/rate_limit.py`): 5 tentativas/e-mail em 15 min, depois HTTP 429.
 - Frontend: sessão fica num cookie `httpOnly` (`mcp_session`), setado por Server Actions após chamar a API — nunca exposta ao JS do cliente. `proxy.ts` (renomeado de `middleware.ts` no Next 16) faz o redirect rápido de rota protegida; a validação real do token acontece sempre no servidor, olhando a API.
+- `YouTubeGateway` (`app/gateways/youtube.py`) com duas implementações trocáveis via `Settings.youtube_fake_gateway`: `GoogleYouTubeGateway` (real, `httpx`) e `FakeYouTubeGateway` (determinística, sem rede — Documento 02 §71). Fica em `true` (fake) até o usuário configurar credenciais reais do Google Cloud.
+- Tokens OAuth sempre criptografados em repouso (`app/security/encryption.py`, Fernet, chave em `TOKEN_ENCRYPTION_KEY`) — nunca devolvidos pela API.
+- OAuth `state` assinado via HMAC (stdlib puro, `app/security/signed_state.py`) — sem storage server-side, carrega `organization_id`+`user_id`, expira em 10 min.
+- Fluxo OAuth passa pelo frontend (Next.js Route Handlers `/oauth/youtube/{start,callback}`), nunca direto do navegador para a API — é o Next.js que tem o cookie de sessão do usuário e o repassa como Bearer token pra API.
 
 ### 4.1 Fase 01 — Relatório de Conclusão
 
@@ -202,9 +206,44 @@ bash infra/scripts/smoke-test.sh
 # depois, testar manualmente: http://localhost:3000/register
 ```
 
+### 4.4 Fase 04 — Relatório de Conclusão
+
+**Implementado:**
+- **2 entidades novas** (Documento 03 §10-11, Documento 10 F04): `channel_connections` (modelo `ChannelConnection`) e `channel_sync_runs` (modelo `ChannelSyncRun`). Migration `59037a0445d8`.
+- **`app/gateways/youtube.py` (`YouTubeGateway`)**: abstração com `get_authorization_url`, `exchange_code`, `refresh_access_token`, `get_channel_info`, `revoke_token`. Duas implementações: `GoogleYouTubeGateway` (real, via `httpx`, endpoints OAuth2 + YouTube Data API v3 do Google) e `FakeYouTubeGateway` (determinística — sempre resolve para o mesmo `external_channel_id` fixo, simulando reconectar a mesma conta). Selecionada por `Settings.youtube_fake_gateway` (`YOUTUBE_FAKE_GATEWAY`, default `true`).
+- **`app/security/encryption.py`**: Fernet, chave via `TOKEN_ENCRYPTION_KEY` (nunca no banco). **`app/security/signed_state.py`**: state HMAC-assinado stateless (sem nova dependência).
+- **`ChannelConnectionService`** (`app/services/channel_connection.py`): `start_connection` (valida membership, gera state assinado, retorna a `authorization_url`), `complete_connection` (verifica state, troca código por tokens, busca info do canal, faz upsert de `Channel`+`ChannelConnection`, grava `ChannelSyncRun` tipo `INITIAL`, audit log `channel.connected`), `disconnect` (revoga token best-effort no Google, marca `DISCONNECTED`/`DISABLED`, audit log `channel.disconnected`).
+- **Endpoints** (`/api/v1/channels/*`): `GET` (listar, qualquer membro), `POST /connect` (requer `Permission.CHANNEL_MANAGE`), `POST /callback` (troca code+state por canal conectado), `POST /{id}/disconnect` (requer `Permission.CHANNEL_MANAGE`).
+- **Frontend**: Route Handlers `GET /oauth/youtube/start` e `GET /oauth/youtube/callback` (BFF — o Next.js tem o cookie de sessão, a API nunca vê o browser diretamente nesse fluxo); página `/channels` (lista canais, badge de status, conectar/desconectar); link "Canais" adicionado ao dashboard; `proxy.ts` protegendo `/channels` também.
+- **Não implementado** (fora de escopo por definição): importação de vídeos/playlists (`source_videos` etc. — Fase 05), refresh automático de token expirado (o método existe no gateway mas nada ainda o chama de forma agendada — chega com o Scheduler da Fase 18/Celery Beat), UI de credenciais Google reais (usuário decidiu seguir só com `FakeYouTubeGateway` por enquanto).
+
+**Dois bugs reais encontrados e corrigidos:**
+1. `TenantScopedRepository.add()`/`BaseRepository.add()` fazem `session.flush()` imediatamente. Em `complete_connection`, o código criava `Channel`/`ChannelConnection` "vazios" e só preenchia os campos `NOT NULL` *depois* de chamar `.add()` — flush prematuro quebrava com `IntegrityError`. Corrigido usando `session.add()` cru (sem flush) nesses dois pontos; documentado em `docs/database.md` como padrão a lembrar em fases futuras.
+2. **Só apareceu no teste manual no navegador, não nos testes automatizados**: o `FakeYouTubeGateway.get_channel_info` gerava `external_channel_id` a partir de um hash do `access_token`, que muda a cada clique em "Conectar" (código OAuth aleatório novo). Resultado: reconectar sempre criava um canal duplicado em vez de atualizar o existente — o upsert por `external_channel_id` nunca disparava de verdade. Os testes de serviço não pegaram isso porque usavam o mesmo `code` literal nas duas chamadas. Corrigido tornando o `external_channel_id` do fake gateway uma constante fixa (simula reconectar a mesma conta Google de verdade). Ficou registrado como lição: **um "fake" tem que simular identidade estável entre chamadas, não só evitar rede.**
+
+**Validado nesta sessão:**
+- 82 testes de backend (pytest) contra Postgres+Redis reais, incluindo: round-trip de criptografia, `signed_state` (válido/adulterado/expirado/malformado), `FakeYouTubeGateway` determinístico, `ChannelConnectionService` completo (conectar, reconectar sem duplicar, desconectar, state de usuário errado rejeitado, state inválido rejeitado), endpoints HTTP (conectar, callback, listar, desconectar, viewer sem permissão → 403, nunca vaza token na resposta). `ruff`/`mypy` limpos.
+- Migration validada com ciclo `upgrade → downgrade → upgrade`.
+- Stack Docker reconstruída; **fluxo completo testado manualmente no navegador**: clicar "Conectar YouTube" → passa pelo loop OAuth fake → volta pra `/channels` com "Canal conectado com sucesso" → canal aparece com badge "Conectado" → desconectar → badge muda pra "Desconectado" e botão some → reconectar → confirmado que **não duplica** (foi isso que revelou o bug #2 acima).
+- Frontend: `eslint`, `tsc --noEmit` (precisou rodar `next typegen` pra reconhecer a rota nova `/channels`), `vitest`, `next build` — todos limpos.
+
+**Pendências / Known Limitations:**
+- Credenciais reais do Google Cloud não configuradas — `GoogleYouTubeGateway` implementada mas nunca exercida de ponta a ponta contra o Google de verdade. Trocar `YOUTUBE_FAKE_GATEWAY=false` + preencher `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` quando o usuário tiver o projeto no Google Cloud Console.
+- Refresh automático de token expirado: método pronto no gateway, sem chamador agendado ainda.
+- `docs/database.md` atualizado com `channel_connections`/`channel_sync_runs` no ERD e as decisões desta fase.
+
+**Como validar:**
+```bash
+cd apps/api && pytest -v
+cd apps/web && npm run lint && npm run typecheck && npm run test && npm run build
+docker compose up -d --build
+bash infra/scripts/smoke-test.sh
+# depois, testar manualmente: http://localhost:3000/channels (logado) → Conectar YouTube
+```
+
 ## 5. Pendências / Perguntas em Aberto
 
-- Fase 03 implementada e validada nesta sessão — **ainda não commitada/enviada** (aguardando pedido explícito, mesmo padrão das fases anteriores).
+- Nenhuma pendência bloqueante — Fase 03 commitada (`4e5ecdc`) e enviada para `main`.
 - Documento 10 (seção 137) sugere organizar os documentos em `/docs/master/` com slugs (`01-product-brief.md`, etc.) — não feito; usuário optou implicitamente por manter o padrão atual `Documento NN - Titulo.md` ao pedir para seguir direto para a Fase 01.
 - Ainda não definido: nome comercial do produto, provedor de IA/mídia real a integrar primeiro na Fase 13 (Documento 10 §71 pede benchmark atualizado antes de decidir — não assumir Higgsfield/Kie/fal.ai/WaveSpeed/Replicate como escolha final), moeda/plano de billing.
 

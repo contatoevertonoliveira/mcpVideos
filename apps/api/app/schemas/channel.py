@@ -5,7 +5,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.enums import AutomationMode, ChannelPlatform, ChannelStatus
+from app.models.enums import AutomationMode, ChannelConnectionStatus, ChannelPlatform, ChannelStatus
 
 
 class ChannelCreate(BaseModel):
@@ -30,3 +30,5 @@ class ChannelRead(BaseModel):
     last_synced_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    # Nunca inclui tokens (Documento 09 sec. 20) - so o status da conexao.
+    connection_status: ChannelConnectionStatus | None = None
