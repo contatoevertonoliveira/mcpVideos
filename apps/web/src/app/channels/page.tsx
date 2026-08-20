@@ -5,9 +5,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getSessionToken } from "@/lib/session-cookie";
-import { listChannels } from "@/services/api/channels";
+import { listChannels, listChannelVideos } from "@/services/api/channels";
 
-import { disconnectChannelAction } from "./actions";
+import { disconnectChannelAction, triggerSyncAction } from "./actions";
+
+function formatLastSynced(lastSyncedAt: string | null): string {
+  if (!lastSyncedAt) {
+    return "Nunca sincronizado";
+  }
+  return `Última sincronização: ${new Date(lastSyncedAt).toLocaleString("pt-BR")}`;
+}
 
 function statusLabel(status: string): string {
   const labels: Record<string, string> = {
@@ -31,6 +38,9 @@ export default async function ChannelsPage(props: PageProps<"/channels">) {
   const error = typeof searchParams.error === "string" ? searchParams.error : null;
 
   const channels = await listChannels(token);
+  const videoCounts = await Promise.all(
+    channels.map((channel) => listChannelVideos(token, channel.id).then((videos) => videos.length)),
+  );
 
   return (
     <div className="mx-auto flex min-h-svh max-w-3xl flex-col gap-6 p-8">
@@ -63,7 +73,7 @@ export default async function ChannelsPage(props: PageProps<"/channels">) {
         </Card>
       ) : (
         <div className="flex flex-col gap-3">
-          {channels.map((channel) => (
+          {channels.map((channel, index) => (
             <Card key={channel.id}>
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle className="text-base">{channel.name}</CardTitle>
@@ -71,16 +81,30 @@ export default async function ChannelsPage(props: PageProps<"/channels">) {
                   {statusLabel(channel.connection_status ?? channel.status)}
                 </Badge>
               </CardHeader>
-              <CardContent className="flex items-center justify-between text-sm text-muted-foreground">
-                <span>Automação: {channel.automation_mode}</span>
-                {channel.connection_status === "connected" && (
-                  <form action={disconnectChannelAction}>
-                    <input type="hidden" name="channel_id" value={channel.id} />
-                    <Button type="submit" variant="outline" size="sm">
-                      Desconectar
-                    </Button>
-                  </form>
-                )}
+              <CardContent className="flex flex-col gap-2 text-sm text-muted-foreground">
+                <div className="flex items-center justify-between">
+                  <span>Automação: {channel.automation_mode}</span>
+                  <span>{videoCounts[index]} vídeos importados</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>{formatLastSynced(channel.last_synced_at)}</span>
+                  {channel.connection_status === "connected" && (
+                    <div className="flex gap-2">
+                      <form action={triggerSyncAction}>
+                        <input type="hidden" name="channel_id" value={channel.id} />
+                        <Button type="submit" variant="outline" size="sm">
+                          Sincronizar agora
+                        </Button>
+                      </form>
+                      <form action={disconnectChannelAction}>
+                        <input type="hidden" name="channel_id" value={channel.id} />
+                        <Button type="submit" variant="outline" size="sm">
+                          Desconectar
+                        </Button>
+                      </form>
+                    </div>
+                  )}
+                </div>
               </CardContent>
             </Card>
           ))}

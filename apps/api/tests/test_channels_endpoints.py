@@ -155,3 +155,71 @@ def test_viewer_cannot_connect_channel(client, db_session):
 
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "PERMISSION_DENIED"
+
+
+def _connect_channel(client, token: str) -> dict:
+    auth_url = client.post("/api/v1/channels/connect", headers=_auth_headers(token)).json()[
+        "authorization_url"
+    ]
+    state = auth_url.split("state=")[1]
+    return client.post(
+        "/api/v1/channels/callback",
+        json={"code": "code-xyz", "state": state},
+        headers=_auth_headers(token),
+    ).json()
+
+
+def test_connecting_a_channel_dispatches_a_sync_job(client, monkeypatch):
+    from app.tasks import channel_sync as channel_sync_tasks
+
+    token = _register_and_get_token(client)
+    _connect_channel(client, token)
+
+    channel_sync_tasks.run_channel_sync_task.delay.assert_called_once()
+    call_kwargs = channel_sync_tasks.run_channel_sync_task.delay.call_args.kwargs
+    assert call_kwargs["sync_type"] == "initial"
+
+
+def test_trigger_sync_creates_job(client):
+    token = _register_and_get_token(client)
+    channel = _connect_channel(client, token)
+
+    response = client.post(
+        f"/api/v1/channels/{channel['id']}/sync", headers=_auth_headers(token)
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "job_id" in body
+    assert "correlation_id" in body
+
+
+def test_trigger_sync_unknown_channel_returns_404(client):
+    token = _register_and_get_token(client)
+
+    response = client.post(
+        f"/api/v1/channels/{uuid.uuid4()}/sync", headers=_auth_headers(token)
+    )
+
+    assert response.status_code == 404
+
+
+def test_list_videos_and_sync_runs_start_empty_for_a_new_channel(client):
+    token = _register_and_get_token(client)
+    channel = _connect_channel(client, token)
+
+    videos_response = client.get(
+        f"/api/v1/channels/{channel['id']}/videos", headers=_auth_headers(token)
+    )
+    runs_response = client.get(
+        f"/api/v1/channels/{channel['id']}/sync-runs", headers=_auth_headers(token)
+    )
+
+    # The connect flow only dispatches the Celery task (mocked in tests) -
+    # it does not run the import synchronously, so no videos exist yet, but
+    # the connection-time INITIAL sync_run row from Fase 04 does.
+    assert videos_response.status_code == 200
+    assert videos_response.json() == []
+    assert runs_response.status_code == 200
+    assert len(runs_response.json()) == 1
+    assert runs_response.json()[0]["sync_type"] == "initial"

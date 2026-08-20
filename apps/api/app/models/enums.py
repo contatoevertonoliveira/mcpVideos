@@ -112,3 +112,13 @@ class SyncRunStatus(StrEnum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class SourceVideoType(StrEnum):
+    """Documento 03, secao 12. Classificado pelo ChannelSyncService a
+    partir da duracao (heuristica: <=60s = short), nao pelo gateway."""
+
+    SHORT = "short"
+    LONG_FORM = "long_form"
+    LIVE = "live"
+    UNKNOWN = "unknown"

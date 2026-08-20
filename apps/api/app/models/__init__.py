@@ -7,6 +7,9 @@ from app.models.job import Job
 from app.models.organization import Organization
 from app.models.organization_member import OrganizationMember
 from app.models.session import UserSession
+from app.models.source_playlist import SourcePlaylist
+from app.models.source_video import SourceVideo
+from app.models.source_video_metric import SourceVideoMetric
 from app.models.user import User
 
 __all__ = [
@@ -18,6 +21,9 @@ __all__ = [
     "Job",
     "Organization",
     "OrganizationMember",
+    "SourcePlaylist",
+    "SourceVideo",
+    "SourceVideoMetric",
     "User",
     "UserSession",
 ]

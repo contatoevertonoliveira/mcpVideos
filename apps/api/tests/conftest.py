@@ -1,4 +1,5 @@
 import os
+from unittest.mock import MagicMock
 
 import pytest
 import redis as redis_lib
@@ -9,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.redis import get_redis_client
 from app.db.session import get_db
 from app.main import app
+from app.tasks import channel_sync as channel_sync_tasks
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
@@ -22,6 +24,15 @@ def anyio_backend() -> str:
     """Runs @pytest.mark.anyio async tests (Fase 04's YouTubeGateway
     coroutines) on asyncio only - no need for trio in this project."""
     return "asyncio"
+
+
+@pytest.fixture(autouse=True)
+def no_celery_dispatch(monkeypatch):
+    """Never enqueue real Celery tasks from tests: DB writes made in a test
+    transaction that gets rolled back must never reach a worker consuming
+    the real Redis broker. The task body itself is tested directly (with
+    its own db_session), never through .delay()."""
+    monkeypatch.setattr(channel_sync_tasks.run_channel_sync_task, "delay", MagicMock())
 
 
 @pytest.fixture(scope="session")

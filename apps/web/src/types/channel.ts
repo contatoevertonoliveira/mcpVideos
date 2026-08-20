@@ -19,3 +19,14 @@ export interface ChannelSummary {
   last_synced_at: string | null;
   connection_status: ConnectionStatus;
 }
+
+export interface SourceVideoSummary {
+  id: string;
+  channel_id: string;
+  external_video_id: string;
+  title: string;
+  video_type: "short" | "long_form" | "live" | "unknown";
+  duration_seconds: number | null;
+  published_at: string | null;
+  thumbnail_url: string | null;
+}

@@ -6,14 +6,21 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session as DbSession
 
 from app.api.deps import get_current_organization_id, get_current_user, require_permission
+from app.core.exceptions import NotFoundError
 from app.db.session import get_db
 from app.domain.permissions import Permission
 from app.models.channel import Channel
+from app.models.enums import SyncType
 from app.models.user import User
 from app.repositories.channel import ChannelRepository
+from app.repositories.channel_sync_run import ChannelSyncRunRepository
+from app.repositories.source_video import SourceVideoRepository
 from app.schemas.channel import ChannelRead
 from app.schemas.channel_connection import ConnectChannelResponse, OAuthCallbackRequest
+from app.schemas.channel_sync_run import ChannelSyncRunRead, TriggerSyncResponse
+from app.schemas.source_video import SourceVideoRead
 from app.services.channel_connection import ChannelConnectionService
+from app.tasks.channel_sync import dispatch_channel_sync
 
 router = APIRouter(prefix="/channels", tags=["channels"])
 
@@ -68,3 +75,47 @@ async def disconnect(
         channel_id=channel_id, organization_id=organization_id
     )
     return _to_read(channel, db, organization_id)
+
+
+@router.post("/{channel_id}/sync", response_model=TriggerSyncResponse)
+def trigger_sync(
+    channel_id: uuid.UUID,
+    organization_id: uuid.UUID = Depends(require_permission(Permission.CHANNEL_MANAGE)),
+    db: DbSession = Depends(get_db),
+) -> TriggerSyncResponse:
+    channel = ChannelRepository(db).get_by_id(channel_id, organization_id=organization_id)
+    if channel is None:
+        raise NotFoundError("Channel not found", code="CHANNEL_NOT_FOUND")
+
+    job = dispatch_channel_sync(
+        db, channel_id=channel_id, organization_id=organization_id, sync_type=SyncType.MANUAL
+    )
+    # dispatch_channel_sync always passes a correlation_id (JobService.create_job
+    # defaults to uuid4() when None) - the model column is nullable only because
+    # Job is a generic entity shared by other, not-yet-built job types.
+    assert job.correlation_id is not None
+    return TriggerSyncResponse(job_id=job.id, correlation_id=job.correlation_id)
+
+
+@router.get("/{channel_id}/videos", response_model=list[SourceVideoRead])
+def list_videos(
+    channel_id: uuid.UUID,
+    organization_id: uuid.UUID = Depends(get_current_organization_id),
+    db: DbSession = Depends(get_db),
+) -> list[SourceVideoRead]:
+    videos = SourceVideoRepository(db).list_by_channel(
+        channel_id=channel_id, organization_id=organization_id
+    )
+    return [SourceVideoRead.model_validate(video) for video in videos]
+
+
+@router.get("/{channel_id}/sync-runs", response_model=list[ChannelSyncRunRead])
+def list_sync_runs(
+    channel_id: uuid.UUID,
+    organization_id: uuid.UUID = Depends(get_current_organization_id),
+    db: DbSession = Depends(get_db),
+) -> list[ChannelSyncRunRead]:
+    runs = ChannelSyncRunRepository(db).list_by_channel(
+        channel_id=channel_id, organization_id=organization_id
+    )
+    return [ChannelSyncRunRead.model_validate(run) for run in runs]

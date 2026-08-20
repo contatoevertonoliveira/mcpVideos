@@ -2,7 +2,7 @@
 
 > Mantido conforme Documento 03, seção 133. Atualizar a cada fase que alterar o domínio.
 
-Última atualização: Fase 04 — YouTube Integration.
+Última atualização: Fase 05 — Channel Importer.
 
 ## ERD
 
@@ -17,6 +17,9 @@ erDiagram
     ORGANIZATION ||--o{ USER_SESSION : "active context (optional)"
     CHANNEL ||--o| CHANNEL_CONNECTION : "has one"
     CHANNEL ||--o{ CHANNEL_SYNC_RUN : logs
+    CHANNEL ||--o{ SOURCE_VIDEO : has
+    CHANNEL ||--o{ SOURCE_PLAYLIST : has
+    SOURCE_VIDEO ||--o{ SOURCE_VIDEO_METRIC : "historical snapshots"
 
     ORGANIZATION {
         uuid id PK
@@ -149,6 +152,55 @@ erDiagram
         string error_message
         uuid correlation_id
     }
+
+    SOURCE_VIDEO {
+        uuid id PK
+        uuid organization_id FK
+        uuid channel_id FK "UK with external_video_id"
+        string external_video_id "UK with channel_id"
+        string title
+        string description
+        enum video_type
+        int duration_seconds
+        timestamptz published_at
+        string privacy_status
+        string thumbnail_url
+        jsonb raw_metadata_json
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    SOURCE_PLAYLIST {
+        uuid id PK
+        uuid organization_id FK
+        uuid channel_id FK "UK with external_playlist_id"
+        string external_playlist_id "UK with channel_id"
+        string title
+        string description
+        int item_count
+        jsonb raw_metadata_json
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    SOURCE_VIDEO_METRIC {
+        uuid id PK
+        uuid organization_id FK
+        uuid channel_id FK
+        uuid source_video_id FK "UK with captured_at"
+        timestamptz captured_at "UK with source_video_id"
+        bigint views
+        bigint likes
+        bigint comments
+        float watch_time_minutes "NULL ate Fase 19"
+        float average_view_duration "NULL ate Fase 19"
+        float average_view_percentage "NULL ate Fase 19"
+        int subscribers_gained "NULL ate Fase 19"
+        int subscribers_lost "NULL ate Fase 19"
+        bigint impressions "NULL ate Fase 19"
+        float impressions_ctr "NULL ate Fase 19"
+        jsonb raw_metrics_json
+    }
 ```
 
 `FEATURE_FLAG` fica fora do diagrama de relacionamentos porque `scope_id` é polimórfico (aponta para `organizations.id` ou `channels.id` dependendo de `scope_type`, ou é nulo quando `scope_type=global`) — não tem FK fixa de propósito (Documento 03, seção 85).
@@ -163,7 +215,8 @@ erDiagram
 | 02 | `organizations`, `users`, `organization_members`, `channels`, `jobs`, `feature_flags`, `audit_logs` | ✅ |
 | 03 | `sessions` (modelo `UserSession`) | ✅ |
 | 04 | `channel_connections`, `channel_sync_runs` | ✅ |
-| 05+ | `source_videos`, `source_playlists`, `source_video_metrics`, ... | ⏳ |
+| 05 | `source_videos`, `source_playlists`, `source_video_metrics` | ✅ |
+| 06+ | `channel_profiles`, `audience_profiles`, ... | ⏳ |
 
 Ver Documento 03, seções 110-129 para o mapeamento completo fase → entidades. `sessions` não está no Documento 03 (que deixa "sessions/tokens conforme implementação" em aberto — Documento 10 §112) — modelada aqui seguindo os campos exatos do Documento 09 §6 (`session_id`, `user_id`, `created_at`, `expires_at`, `last_seen_at`, `revoked_at`).
 
@@ -193,3 +246,14 @@ Ver Documento 03, seções 110-129 para o mapeamento completo fase → entidades
 - **`channel_sync_runs` na Fase 04** grava só o tipo `INITIAL` (a conexão em si) — importação de vídeos/playlists (`FULL`/`INCREMENTAL`) é Fase 05 (Channel Importer), conforme Documento 03 §113-114.
 - **Upsert por `external_channel_id`**: reconectar um canal já existente (mesmo `organization_id` + `platform` + `external_channel_id`) atualiza o registro existente em vez de duplicar — cobre tanto reconexão quanto refresh de metadata.
 - **Bug real encontrado via teste:** `TenantScopedRepository.add()`/`BaseRepository.add()` fazem `session.flush()` imediatamente. Construir uma entidade com campos `NOT NULL` ainda vazios e só preenchê-los *depois* de chamar `.add()` quebra com `IntegrityError`. Corrigido usando `session.add()` (sem flush) nesses dois pontos específicos do `ChannelConnectionService`, e documentado aqui para não se repetir em fases futuras: **sempre preencher os campos obrigatórios antes de persistir, ou usar `session.add()` cru quando precisar de duas etapas.**
+
+## Decisões de modelagem (Fase 05)
+
+- **`source_videos`/`source_playlists` unique constraint** em `(channel_id, external_*_id)`, igual ao padrão de `channels`/`channel_connections` — é o que garante a idempotência exigida pelo Documento 04 §19 ("re-sync não duplica"): o `ChannelSyncService` faz upsert por esse par.
+- **`created_at`/`updated_at` em `source_playlists`** não estão nos "campos" listados no Documento 03 §13, mas foram adicionados por consistência com o resto do schema e porque o upsert idempotente precisa distinguir criação de atualização (mesma lógica de `source_videos`).
+- **`source_video_metrics` é histórica e append-only** (Documento 03 §14: "nunca sobrescrever") — sem `TimestampMixin`, só `captured_at`. Unique constraint em `(source_video_id, captured_at)` para nunca duplicar a mesma captura se uma task Celery for reexecutada.
+- **Métricas da YouTube Analytics API ficam `NULL` por enquanto.** `views`/`likes`/`comments` vêm do YouTube Data API v3 (`videos.list?part=statistics`), disponível com o mesmo escopo OAuth já usado. `watch_time_minutes`, `average_view_duration/percentage`, `subscribers_gained/lost`, `impressions`, `impressions_ctr` exigem a YouTube Analytics API (escopo e fluxo próprios) — isso é explicitamente Fase 19 (Analytics & Learning Engine) no Documento 10, não Fase 05. Implementar agora seria "funcionalidade de fase futura de forma improvisada" (regra não-negociável do `CLAUDE.md`).
+- **`SourceVideoType` (short/long_form/live/unknown) é classificado pelo `ChannelSyncService`, não pelo gateway.** A YouTube Data API não tem um campo nativo "é Short" — a heurística usada (duração ≤ 60s) é aplicada centralmente no passo de "normalize" do fluxo (Documento 04 §18), para que `GoogleYouTubeGateway`/`FakeYouTubeGateway` só devolvam fatos brutos (duração, live ou não).
+- **`YouTubeGateway` ganhou `list_playlists`/`list_videos`/`get_video_metrics`.** `GoogleYouTubeGateway` implementa a sequência real (`channels.list` para achar a playlist de uploads → `playlistItems.list` → `videos.list` em lotes de 50, com paginação limitada a 5 páginas como cap de segurança para o MVP). `FakeYouTubeGateway` devolve sempre os mesmos 5 vídeos/1 playlist determinísticos (2 shorts + 3 vídeos longos), para que o teste de "não duplica no re-sync" seja exercitável sem rede.
+- **Primeira task Celery real do projeto** (`app/tasks/channel_sync.py`, nome lógico `channel.sync.v1` do Documento 04 §16). O motor completo de workflows versionados (`workflow_runs`, retry/resume/pause) só chega na Fase 11 — aqui é uma única task Celery com retry simples (`max_retries=3`, backoff exponencial com jitter), seguindo a regra fundamental de jobs do Documento 02 §21: o estado vive em `channel_sync_runs`/`jobs` no Postgres, o Celery só executa.
+- **Bug real encontrado via teste manual no navegador (não pelos testes automatizados):** o disparo do sync (`dispatch_channel_sync`) cria a linha `Job` e chama `.delay()` dentro da mesma transação HTTP que ainda não commitou — o worker Celery, rodando em outro processo/conexão, às vezes lia o Postgres *antes* do commit da API terminar e falhava com "Job not found". Reproduzido de forma determinística disparando `POST /channels/{id}/sync` manualmente contra a stack Docker real. Corrigido com um retry curto e limitado (`_mark_running_with_retry`, até 5 tentativas / 1.5s) na primeira leitura do Job dentro da task, em vez de um padrão de outbox transacional completo (mais mecanismo do que esta fase precisa). Validado com 3 disparos concorrentes reais sem nenhuma falha.

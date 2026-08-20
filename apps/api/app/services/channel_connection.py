@@ -29,6 +29,7 @@ from app.repositories.organization_member import OrganizationMemberRepository
 from app.security.encryption import decrypt_token, encrypt_token
 from app.security.signed_state import InvalidStateError, create_state, verify_state
 from app.services.audit import AuditService
+from app.tasks.channel_sync import dispatch_channel_sync
 
 STATE_MAX_AGE_SECONDS = 600
 logger = get_logger(__name__)
@@ -154,6 +155,16 @@ class ChannelConnectionService:
                 "platform": "youtube",
                 "external_channel_id": channel_info.external_channel_id,
             },
+        )
+
+        # Documento 10, Fase 05: "Conectar canal dispara import." First
+        # connection imports everything (INITIAL); reconnecting an already
+        # imported channel only needs to catch up (INCREMENTAL).
+        dispatch_channel_sync(
+            self.session,
+            channel_id=channel.id,
+            organization_id=organization_id,
+            sync_type=SyncType.INITIAL if is_new_channel else SyncType.INCREMENTAL,
         )
         return channel
 

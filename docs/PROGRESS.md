@@ -8,9 +8,9 @@
 
 ## 1. Status Geral
 
-**Fase atual:** ✅ **Fase 04 — YouTube Integration implementada e validada de ponta a ponta**, inclusive testada manualmente no navegador com o `FakeYouTubeGateway` (conectar → canal aparece → desconectar → reconectar sem duplicar). Ver seção 4.4 para o relatório completo. Fases 01-03 permanecem 100% validadas (seções 4.1-4.3).
+**Fase atual:** ✅ **Fase 05 — Channel Importer implementada e validada de ponta a ponta**, inclusive testada manualmente no navegador (clicar "Sincronizar agora" → worker Celery real processa → vídeos aparecem). Ver seção 4.5 para o relatório completo. Fases 01-04 permanecem 100% validadas e commitadas (seções 4.1-4.4).
 
-**Próximo passo:** commitar a Fase 04 (aguardando confirmação do usuário) e depois iniciar a **Fase 05 — Channel Importer**.
+**Próximo passo:** commitar a Fase 05 (aguardando confirmação do usuário) e depois iniciar a **Fase 06 — Channel Intelligence**.
 
 ---
 
@@ -241,11 +241,49 @@ bash infra/scripts/smoke-test.sh
 # depois, testar manualmente: http://localhost:3000/channels (logado) → Conectar YouTube
 ```
 
+### 4.5 Fase 05 — Relatório de Conclusão
+
+**Implementado:**
+- **3 entidades novas** (Documento 03 §12-14, Documento 10 F05): `source_videos`, `source_playlists`, `source_video_metrics`. Migration `93a5b4b81649`.
+- **`YouTubeGateway` estendido** com `list_playlists`, `list_videos`, `get_video_metrics`. `GoogleYouTubeGateway` implementa a sequência real do YouTube Data API v3 (uploads playlist → playlistItems → videos.list em lotes de 50, paginação limitada a 5 páginas como cap de segurança do MVP); `FakeYouTubeGateway` devolve sempre os mesmos 5 vídeos determinísticos (2 Shorts + 3 vídeos longos) e 1 playlist.
+- **`ChannelSyncService`** (`app/services/channel_sync.py`): implementa o fluxo do Documento 04 §18 (VALIDATE TOKEN → REFRESH IF REQUIRED → FETCH CHANNEL/CONTENT/METRICS → NORMALIZE → UPSERT → UPDATE LAST_SYNC → COMPLETE). Classifica `short`/`long_form`/`live`/`unknown` centralmente (heurística de duração ≤60s), faz upsert por `external_video_id`/`external_playlist_id` (idempotente — re-sync nunca duplica), grava métricas como histórico append-only.
+- **Primeira task Celery real do projeto** (`app/tasks/channel_sync.py`, nome lógico `channel.sync.v1`): `run_channel_sync_task`, com retry controlado (`max_retries=3`, backoff exponencial+jitter) para erros de rede. `dispatch_channel_sync` cria um `Job` (entidade genérica da Fase 02, usada pela primeira vez) e enfileira a task.
+- **Conectar canal dispara import automaticamente** (critério de aceite do Documento 10): `ChannelConnectionService.complete_connection` agora despacha um sync `INITIAL` (canal novo) ou `INCREMENTAL` (reconexão) ao final do fluxo OAuth.
+- **Endpoints novos** em `/api/v1/channels/*`: `POST /{id}/sync` (trigger manual, `sync_type=MANUAL`, requer `Permission.CHANNEL_MANAGE`), `GET /{id}/videos`, `GET /{id}/sync-runs`.
+- **Frontend**: página `/channels` ganhou contagem de vídeos importados, timestamp da última sincronização e botão "Sincronizar agora" por canal conectado.
+- **Não implementado** (fora de escopo por definição): `watch_time_minutes`/`average_view_duration`/`subscribers_gained-lost`/`impressions`/`impressions_ctr` ficam `NULL` — exigem a YouTube Analytics API (escopo/fluxo próprios), que é explicitamente Fase 19 (Analytics & Learning Engine) no Documento 10, não Fase 05; sincronização agendada automática (Celery Beat) é Fase 18 (Scheduler & YouTube Publisher) — nesta fase o trigger é só conectar canal ou pedido manual.
+
+**Bug real encontrado e corrigido (só apareceu testando manualmente contra a stack Docker real, não nos testes automatizados):**
+`dispatch_channel_sync` cria a linha `Job` e chama `.delay()` dentro da mesma transação HTTP que ainda não tinha commitado. O worker Celery, rodando em processo/conexão separada, às vezes lia o Postgres *antes* do commit da API terminar e falhava com `NotFoundError: Job not found`. Reproduzido de forma determinística disparando `POST /channels/{id}/sync` contra a stack real. Corrigido com um retry curto e limitado (`_mark_running_with_retry`, até 5 tentativas / 1.5s) na primeira leitura do Job dentro da task — uma race condition clássica entre broker e commit de banco, resolvida de forma pragmática em vez de um outbox transacional completo (mais mecanismo do que esta fase precisa). Validado disparando 3 syncs concorrentes reais sem nenhuma falha.
+
+**Validado nesta sessão:**
+- 97 testes de backend (pytest) contra Postgres+Redis reais: gateway determinístico (playlists/vídeos/métricas estáveis entre chamadas), `ChannelSyncService` completo (import inicial, re-sync sem duplicar, refresh de token expirado, canal sem conexão rejeitado, canal desconhecido rejeitado, falha do gateway marca o run como `FAILED` e reverte o status da conexão), retry de visibilidade do Job, endpoints HTTP (trigger/videos/sync-runs, 404 para canal desconhecido, dispatch do Celery mockado via fixture autouse). `ruff`/`mypy` limpos.
+- Migration validada com ciclo `upgrade → downgrade → upgrade` no banco de dev e aplicada ao banco de teste.
+- Stack Docker reconstruída (api+worker); **fluxo completo validado contra infraestrutura real**: canal conectado via `curl` → worker Celery pegou a task automaticamente → 5 vídeos + 1 playlist importados corretamente classificados (2 shorts, 3 longos) → disparo manual de re-sync 3x concorrente sem duplicar nem falhar.
+- Frontend: `eslint`, `tsc --noEmit` (com `next typegen` para a rota `/channels` atualizada), `vitest`, `next build` — todos limpos. **Validado clicando "Sincronizar agora" no navegador real**: contagem de vídeos foi de 0 para 5 e o timestamp de última sincronização atualizou, confirmando o clique → Server Action → API → Celery → Postgres → nova renderização.
+
+**Pendências / Known Limitations:**
+- Métricas de Analytics (watch time, impressões, CTR, subscribers ganhos/perdidos) aguardando Fase 19.
+- Sincronização agendada automática aguardando Fase 18 (Scheduler).
+- `docs/database.md` atualizado com `source_videos`/`source_playlists`/`source_video_metrics` no ERD e as decisões desta fase.
+
+**Como validar:**
+```bash
+cd apps/api && pytest -v
+cd apps/web && npm run lint && npm run typecheck && npm run test && npm run build
+docker compose up -d --build
+bash infra/scripts/smoke-test.sh
+# depois, testar manualmente: conectar um canal em http://localhost:3000/channels
+# e clicar em "Sincronizar agora" - a contagem de vídeos deve atualizar em poucos segundos
+```
+
 ## 5. Pendências / Perguntas em Aberto
 
-- Nenhuma pendência bloqueante — Fase 03 commitada (`4e5ecdc`) e enviada para `main`.
+- Fases 01-04 commitadas e enviadas para `main` (`b3041ae`, `ed9b437`, `7b54b9c`, `4e5ecdc`, `7675039`). **Fase 05 implementada e validada nesta sessão, ainda não commitada** — aguardando confirmação do usuário.
 - Documento 10 (seção 137) sugere organizar os documentos em `/docs/master/` com slugs (`01-product-brief.md`, etc.) — não feito; usuário optou implicitamente por manter o padrão atual `Documento NN - Titulo.md` ao pedir para seguir direto para a Fase 01.
 - Ainda não definido: nome comercial do produto, provedor de IA/mídia real a integrar primeiro na Fase 13 (Documento 10 §71 pede benchmark atualizado antes de decidir — não assumir Higgsfield/Kie/fal.ai/WaveSpeed/Replicate como escolha final), moeda/plano de billing.
+- Credenciais reais do Google Cloud (`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`) ainda não configuradas — usuário optou por seguir só com `FakeYouTubeGateway` por enquanto (Fase 04). `GoogleYouTubeGateway` está implementada e pronta (incluindo os métodos de import da Fase 05), mas nunca exercitada contra o Google real.
+- Direção visual: usuário pediu explicitamente uma estética moderna, típica de produto de IA para vídeo, quando chegarmos na fase de UX/UI (Documento 08) — a aparência atual é esqueleto funcional deliberado, não uma pendência de bug.
 
 ---
 
@@ -298,6 +336,21 @@ bash infra/scripts/smoke-test.sh
 - 60 testes de backend passando; `ruff`/`mypy`/`eslint`/`tsc`/`vitest`/`next build` limpos.
 - Stack Docker reconstruída e o fluxo completo testado manualmente no navegador (registro → dashboard → logout → proteção de rota → erro de senha → login → redirect de página de auth já autenticado) e o rate limit confirmado via `curl`.
 - Próximo passo: usuário decide se commita/envia a Fase 03 agora.
+
+### 2026-08-20 — Fase 04 — YouTube Integration (mesma data, sessão seguinte)
+- Usuário pediu para seguir para a Fase 04; ao ser perguntado sobre credenciais reais do Google Cloud, optou por seguir só com `FakeYouTubeGateway` por enquanto.
+- Implementados: `channel_connections`/`channel_sync_runs`, `YouTubeGateway` (real + fake), criptografia de tokens (Fernet), state OAuth assinado (HMAC stateless), `ChannelConnectionService`, endpoints `/api/v1/channels/*`, fluxo OAuth via Route Handlers do Next.js (BFF), página `/channels`.
+- Dois bugs reais corrigidos: flush prematuro do repositório quebrando `IntegrityError`; `FakeYouTubeGateway` não-determinístico causando duplicação de canal ao reconectar (só apareceu testando manualmente no navegador).
+- 82 testes de backend passando; `ruff`/`mypy`/`eslint`/`tsc`/`vitest`/`next build` limpos. Fluxo completo validado manualmente no navegador.
+- Commit `7675039` ("feat(F04): YouTube integration") criado e enviado para `main`.
+
+### 2026-08-20 — Fase 05 — Channel Importer (mesma data, sessão seguinte)
+- Usuário pediu para seguir para a Fase 05.
+- Implementadas as 3 entidades (`source_videos`, `source_playlists`, `source_video_metrics`), extensão do `YouTubeGateway` (`list_playlists`/`list_videos`/`get_video_metrics`), `ChannelSyncService` (fluxo completo do Documento 04 §18, idempotente), e a primeira task Celery real do projeto (`app/tasks/channel_sync.py`).
+- Conectar canal agora dispara import automaticamente (critério de aceite do Documento 10); endpoint manual `POST /channels/{id}/sync` e leitura via `GET /{id}/videos`/`GET /{id}/sync-runs` também implementados.
+- **Bug real de concorrência encontrado e corrigido via teste manual contra a stack Docker real** (não pego pelos testes automatizados): race condition entre o commit da transação HTTP e o worker Celery pegando a task, causando `Job not found` intermitente. Corrigido com retry curto e limitado na primeira leitura do Job.
+- 97 testes de backend passando; `ruff`/`mypy`/`eslint`/`tsc`/`vitest`/`next build` limpos. Fluxo completo validado com curl (incluindo 3 syncs concorrentes) e no navegador real (clicar "Sincronizar agora" → contagem de vídeos atualiza).
+- Próximo passo: usuário decide se commita/envia a Fase 05 agora.
 
 ---
 

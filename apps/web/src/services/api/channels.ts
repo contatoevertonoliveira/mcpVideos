@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getApiInternalUrl } from "@/lib/env";
-import type { ChannelSummary } from "@/types/channel";
+import type { ChannelSummary, SourceVideoSummary } from "@/types/channel";
 
 function authHeaders(token: string): HeadersInit {
   return { Authorization: `Bearer ${token}` };
@@ -58,4 +58,27 @@ export async function disconnectChannel(token: string, channelId: string): Promi
     headers: authHeaders(token),
     cache: "no-store",
   }).catch(() => undefined);
+}
+
+export async function triggerChannelSync(token: string, channelId: string): Promise<void> {
+  await fetch(`${getApiInternalUrl()}/api/v1/channels/${channelId}/sync`, {
+    method: "POST",
+    headers: authHeaders(token),
+    cache: "no-store",
+  }).catch(() => undefined);
+}
+
+export async function listChannelVideos(
+  token: string,
+  channelId: string,
+): Promise<SourceVideoSummary[]> {
+  const response = await fetch(`${getApiInternalUrl()}/api/v1/channels/${channelId}/videos`, {
+    headers: authHeaders(token),
+    cache: "no-store",
+  }).catch(() => null);
+
+  if (!response || !response.ok) {
+    return [];
+  }
+  return (await response.json()) as SourceVideoSummary[];
 }
