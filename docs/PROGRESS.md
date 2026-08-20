@@ -8,15 +8,19 @@
 
 ## 1. Status Geral
 
-**Fase atual:** ✅ **Fase 08 — Strategy Engine implementada e validada**, incluindo o fluxo completo gerar→draft→aprovar→active confirmado via `curl` contra a stack Docker real. Ver seção 4.8 para o relatório completo, incluindo uma ressalva sobre a validação manual no navegador desta sessão. Fases 01-07 permanecem 100% validadas (seções 4.1-4.7); Fases 01-06 commitadas, **Fase 07 e Fase 08 ainda não commitadas nesta sessão**.
+**Fase atual:** ✅ **Fase 08 — Strategy Engine implementada, validada e commitada** (`6f37fe6`, junto com a Fase 07). Ver seção 4.8 para o relatório completo. Em seguida, o usuário pediu a leitura do **Documento 08A** (Direção Visual, Design System e Linguagem Futurista) e um retrofit da fundação visual antes da Fase 09 — ver seção 4.9. Fases 01-08 100% validadas e commitadas (seções 4.1-4.8).
 
-**Próximo passo:** commitar as Fases 07 e 08 (aguardando confirmação do usuário) e depois iniciar a **Fase 09 — Ideas & Opportunity Engine**.
+**Próximo passo:** commitar o retrofit visual (aguardando confirmação do usuário) e depois iniciar a **Fase 09 — Ideas & Opportunity Engine**, já com a fundação visual em vigor.
 
 ---
 
 ## 2. Documentos Mestres — Checklist
 
-Todos os **10 documentos** previstos já foram entregues e lidos.
+Todos os **10 documentos** previstos já foram entregues e lidos, mais um complemento entregue mid-projeto:
+
+| # | Documento | Status | Resumo de uma linha |
+|---|-----------|--------|----------------------|
+| 08A | Direção Visual, Design System e Linguagem Futurista da Interface | ✅ Lido (2026-08-20, entre a Fase 08 e a Fase 09) | Complemento obrigatório do Documento 08: identidade "AI Content OS + Video Platform" — Dark Mode Premium como tema principal, tokens obrigatórios (surface/border/status/radius/shadow/motion/z-index), tipografia geométrica, layout sidebar+topbar, componentes reutilizáveis, checklist obrigatório antes de qualquer tela nova (§212) |
 
 | # | Documento | Status | Resumo de uma linha |
 |---|-----------|--------|----------------------|
@@ -381,14 +385,49 @@ bash infra/scripts/smoke-test.sh
 # aparecer, e clicar em "Aprovar estratégia"
 ```
 
+### 4.9 Retrofit da Fundação Visual (Documento 08A) — Relatório de Conclusão
+
+**Contexto:** o Documento 08A (Direção Visual, Design System e Linguagem Futurista) chegou depois da Fase 08 já commitada. Ele exige (§213-217) que a fundação visual (tokens, tema, primitivos, shell) fosse criada já na Fase 01 — o que não aconteceu (F01-F08 usaram o styling padrão do shadcn). O usuário escolheu fazer o retrofit completo agora, antes da Fase 09, em vez de adiar ou fazer só o mínimo.
+
+**Implementado:**
+- **Tokens de design** em `apps/web/src/app/globals.css`: paletas `:root` (light) e `.dark` recalibradas do zero seguindo o Documento 08A — Dark Mode Premium (charcoal/midnight, nunca preto puro) como tema principal, light mode com paleta própria calibrada (não invertida). Tokens novos além dos já existentes do shadcn: `--surface`/`--surface-elevated`/`--surface-hover`, `--border-strong`, `--success`/`--warning`/`--danger`/`--info` (+ `-foreground`), `--shadow-sm/md/lg`, `--shadow-glow-primary`, `--duration-fast/normal/slow`, `--z-dropdown/sticky/overlay/modal/toast`. Accent principal: blue-violet (`oklch` hue ~275).
+- **Dark por padrão, sem flash**: `<html class="dark">` renderizado no servidor; script inline em `layout.tsx` remove a classe antes do hydration só se `localStorage` tiver `"light"` salvo. `ThemeToggle` (`components/theme-toggle.tsx`) client-only (`next/dynamic` `ssr:false`, evita mismatch de hydration) alterna e persiste a escolha.
+- **`AppShell`** (`components/app-shell.tsx`): sidebar fixa desktop (logo, nav Dashboard/Canais, usuário + Sair) + topbar (nome da organização + toggle de tema) + nav horizontal compacta no mobile (sem drawer/`Sheet` ainda — decisão de escopo, ver `docs/ui.md`). Aplicado via um novo layout de route group `src/app/(app)/layout.tsx`, que passou a fazer a checagem de sessão uma única vez (antes duplicada em `dashboard/page.tsx` e `channels/page.tsx`).
+- **Reorganização de rotas**: `dashboard/` e `channels/` movidos (via `git mv`, preservando histórico) para dentro do route group `(app)/` — rotas (`/dashboard`, `/channels`) e `proxy.ts` inalterados, já que route groups não aparecem na URL.
+- **Componentes retocados**: `Button` (glow sutil no hover do variant primary), `Badge` (variantes novas `success`/`warning`/`info`) — ambos continuam consumindo os tokens, então a maior parte do restyle veio de graça só trocando os valores dos tokens (Documento 08A §228: tokens → primitivos → componentes → páginas).
+- **Páginas reestilizadas**: `/` (copy "Fase 03" desatualizada removida, headline nova), `/login`, `/register` (glow radial de fundo sutil em vez de `bg-zinc-50 dark:bg-black` hardcoded), `/dashboard` e `/channels` (removido header/redirect duplicado, tokens `bg-surface`/`border-border`/`text-success`/`text-warning` no lugar de cores hardcoded como `border-green-600/30`).
+- **Documentação nova**: `docs/design-system.md` (tokens, tipografia, componentes, checklist) e `docs/ui.md` (mapa de rotas, o que falta, decisões de escopo) — exigidos pelo Documento 08A §222-224.
+
+**Não implementado (decisão de escopo, documentada em `docs/ui.md`):**
+- Drawer/`Sheet` mobile real para a sidebar — nav horizontal compacta no lugar, até existir um caso de uso real.
+- `Select`/`Dialog`/`Tooltip`/`Tabs`/`Avatar`/`Table`/`Skeleton`/`Toast`/`Progress` (Documento 08A §148) — nenhuma tela atual precisa deles ainda; serão criados quando a primeira tela realmente exigir.
+- Hero do dashboard com métricas (Documento 08A §32 sugere "3 conteúdos programados hoje") — não implementado por não termos Calendário ainda; inventar o número violaria a regra de não ter placeholders enganosos.
+
+**Validado nesta sessão:**
+- `eslint`, `tsc --noEmit`, `vitest`, `next build` — todos limpos (precisou ajustar `ThemeToggle` para não disparar `setState` dentro de `useEffect`, resolvido tornando-o client-only via `next/dynamic`).
+- Stack Docker reconstruída; confirmado via `getComputedStyle`/CSS custom properties no navegador real que o tema dark está ativo por padrão (`<html class="dark">`), que os tokens computam para as cores esperadas, e que trocar a classe `dark`↔ausente troca corretamente para a paleta light calibrada (background quase branco, texto escuro, accent com contraste ajustado) — validação funcional feita via `javascript_tool` já que o clique físico no botão de tema não registrou nesta sessão (mesma instabilidade da ferramenta de automação já registrada nas Fases 07/08, não um bug da aplicação).
+- Navegação confirmada sem regressão: `/`, `/dashboard` e `/channels` renderizam corretamente dentro do novo `AppShell`, com todos os dados e ações das Fases 04-08 intactos (sync, análise, DNA, estratégia).
+
+**Pendências / Known Limitations:**
+- Nenhum clique físico de botão foi confirmado visualmente nesta sessão (ferramenta de automação do navegador instável) — recomenda-se reconfirmar visualmente (toggle de tema, todos os botões de canal) numa sessão futura com a ferramenta mais estável.
+- Navegação lateral só lista Dashboard/Canais — os demais itens do Documento 08A (Ideias, Calendário, Conteúdos, Analytics) entram conforme as fases correspondentes forem implementadas.
+
+**Como validar:**
+```bash
+cd apps/web && npm run lint && npm run typecheck && npm run test && npm run build
+docker compose up -d --build
+# testar manualmente: http://localhost:3000 (dark por padrão, glow sutil no fundo),
+# /login, /register, /dashboard, /channels (sidebar+topbar), e o botão de tema
+```
+
 ## 5. Pendências / Perguntas em Aberto
 
-- Fases 01-06 commitadas e enviadas para `main` (`b3041ae`, `ed9b437`, `7b54b9c`, `4e5ecdc`, `7675039`, `ecf72cd`, `b518bf6`). **Fases 07 e 08 implementadas e validadas nesta sessão, ainda não commitadas** — usuário pediu para seguir para a próxima fase antes de commitar; aguardando confirmação para commitar as duas juntas.
+- Fases 01-08 commitadas e enviadas para `main` (`b3041ae`, `ed9b437`, `7b54b9c`, `4e5ecdc`, `7675039`, `ecf72cd`, `b518bf6`, `6f37fe6`). **Retrofit da fundação visual (Documento 08A) implementado e validado nesta sessão, ainda não commitado** — aguardando confirmação do usuário.
 - Documento 10 (seção 137) sugere organizar os documentos em `/docs/master/` com slugs (`01-product-brief.md`, etc.) — não feito; usuário optou implicitamente por manter o padrão atual `Documento NN - Titulo.md` ao pedir para seguir direto para a Fase 01.
 - Ainda não definido: nome comercial do produto, provedor de IA/mídia real a integrar primeiro na Fase 13 (Documento 10 §71 pede benchmark atualizado antes de decidir — não assumir Higgsfield/Kie/fal.ai/WaveSpeed/Replicate como escolha final), moeda/plano de billing.
 - Credenciais reais do Google Cloud (`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`) ainda não configuradas — usuário optou por seguir só com `FakeYouTubeGateway` por enquanto (Fase 04). `GoogleYouTubeGateway` está implementada e pronta (incluindo os métodos de import da Fase 05), mas nunca exercitada contra o Google real.
 - Credenciais reais da Anthropic (`ANTHROPIC_API_KEY`) também não configuradas — usuário optou por seguir só com `FakeLLMGateway` por enquanto (Fase 06), mesmo padrão de decisão da Fase 04. `AnthropicLLMGateway` implementada e pronta, nunca exercitada.
-- Direção visual: usuário pediu explicitamente uma estética moderna, típica de produto de IA para vídeo, quando chegarmos na fase de UX/UI (Documento 08) — a aparência atual é esqueleto funcional deliberado, não uma pendência de bug.
+- Direção visual: **resolvida** — Documento 08A lido e a fundação visual (dark premium, tokens, `AppShell`) retrofitada nesta sessão (seção 4.9). Próximas telas (Fase 09+) já nascem sobre essa fundação.
 
 ---
 
@@ -480,7 +519,14 @@ bash infra/scripts/smoke-test.sh
 - Endpoints `POST /{id}/strategy/generate`, `GET /{id}/strategy` (active + pending_draft separados), `GET /{id}/strategy/history`, `POST /{id}/strategy/{id}/approve`, `POST`/`GET /{id}/strategy/{id}/rules`. Frontend ganhou os blocos "Estratégia atual"/"Recomendação de estratégia" com botão "Aprovar estratégia", atendendo ao critério de aceite literal do Documento 10.
 - 137 testes de backend passando; `ruff`/`mypy`/`eslint`/`tsc`/`vitest`/`next build` limpos. Fluxo completo gerar→draft→aprovar→active validado via `curl` contra a stack Docker real.
 - **Ressalva**: mesma instabilidade da ferramenta de automação do navegador já registrada na Fase 07 — o botão novo "Gerar estratégia" não pôde ser clicado com sucesso nesta sessão (múltiplas tentativas). Funcionalidade comprovada via `curl` de ponta a ponta.
-- Próximo passo: usuário decide se commita/envia as Fases 07 e 08 agora.
+- Usuário pediu para commitar/enviar as Fases 07 e 08. Commit `6f37fe6` ("feat(F07,F08): channel DNA and strategy engine") criado e enviado para `main`.
+
+### 2026-08-20 — Retrofit da Fundação Visual (Documento 08A) (mesma data, sessão seguinte)
+- Usuário pediu para ler o Documento 08A antes de seguir para a Fase 09. Lido por completo — é um complemento obrigatório do Documento 08 que define a identidade visual (Dark Mode Premium, tokens, tipografia, componentes, motion) e exige (§213-217) que a fundação visual tivesse sido criada já na Fase 01, o que não ocorreu.
+- Perguntado ao usuário como sequenciar em relação à Fase 09; escolheu fazer o retrofit completo agora.
+- Recalibrados os tokens de design em `globals.css` (paletas dark/light do Documento 08A, tokens novos de surface/status/shadow/motion/z-index), app passou a renderizar dark por padrão sem flash, criado `AppShell` (sidebar+topbar) via um novo route group `(app)/` (dashboard e channels movidos para dentro, preservando histórico via `git mv`), `Button`/`Badge` retocados, páginas `/`, `/login`, `/register`, `/dashboard`, `/channels` reestilizadas com os tokens (sem cor hardcoded). Documentação nova: `docs/design-system.md` e `docs/ui.md`.
+- `eslint`/`tsc`/`vitest`/`next build` limpos. Validado no navegador real via `getComputedStyle`/CSS custom properties (dark ativo por padrão, troca para light calibrada corretamente) — clique físico do toggle não registrou nesta sessão (mesma instabilidade da ferramenta já vista nas Fases 07/08), navegação sem regressão confirmada via leitura de página.
+- Próximo passo: usuário decide se commita/envia o retrofit agora, depois seguimos para a Fase 09 — Ideas & Opportunity Engine.
 
 ---
 

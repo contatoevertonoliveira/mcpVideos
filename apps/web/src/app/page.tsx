@@ -16,16 +16,26 @@ export default async function Home() {
   const connection = await checkApiConnection();
 
   return (
-    <div className="flex min-h-svh flex-col items-center justify-center gap-6 bg-zinc-50 p-8 dark:bg-black">
-      <Card className="w-full max-w-md">
+    <div className="relative flex min-h-svh flex-col items-center justify-center gap-8 overflow-hidden bg-background p-8">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,color-mix(in_oklch,var(--primary),transparent_85%),transparent_60%)]"
+      />
+      <div className="relative flex flex-col items-center gap-2 text-center">
+        <h1 className="text-3xl font-semibold tracking-tight">mcp_videos</h1>
+        <p className="max-w-sm text-balance text-muted-foreground">
+          Seu conteúdo. Planejado, criado e otimizado por IA.
+        </p>
+      </div>
+      <Card className="relative w-full max-w-md shadow-(--shadow-lg)">
         <CardHeader>
-          <CardTitle>mcp_videos</CardTitle>
-          <CardDescription>Fase 03 — Authentication & Security</CardDescription>
+          <CardTitle>Status da plataforma</CardTitle>
+          <CardDescription>Content Intelligence + Production + Growth Automation</CardDescription>
         </CardHeader>
         <CardContent className="flex items-center justify-between">
           <span className="text-sm text-muted-foreground">Conexão com a API</span>
           {connection.ok ? (
-            <Badge>Conectado</Badge>
+            <Badge variant="success">Conectado</Badge>
           ) : (
             <Badge variant="destructive">{connection.error}</Badge>
           )}

@@ -1,6 +1,3 @@
-import Link from "next/link";
-import { redirect } from "next/navigation";
-
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -43,7 +40,7 @@ function statusLabel(status: string): string {
 export default async function ChannelsPage(props: PageProps<"/channels">) {
   const token = await getSessionToken();
   if (!token) {
-    redirect("/login");
+    return null;
   }
 
   const searchParams = await props.searchParams;
@@ -63,24 +60,19 @@ export default async function ChannelsPage(props: PageProps<"/channels">) {
   );
 
   return (
-    <div className="mx-auto flex min-h-svh max-w-3xl flex-col gap-6 p-8">
+    <div className="mx-auto flex max-w-3xl flex-col gap-6 p-6 md:p-8">
       <header className="flex items-center justify-between">
-        <div>
-          <Link href="/dashboard" className="text-sm text-muted-foreground underline">
-            ← Dashboard
-          </Link>
-          <h1 className="text-lg font-semibold">Canais</h1>
-        </div>
+        <h1 className="text-2xl font-semibold tracking-tight">Canais</h1>
         <Button render={<a href="/oauth/youtube/start" />}>Conectar YouTube</Button>
       </header>
 
       {connected && (
-        <p className="rounded-md border border-green-600/30 bg-green-600/10 px-4 py-2 text-sm text-green-700 dark:text-green-400">
+        <p className="rounded-lg border border-success/30 bg-success/10 px-4 py-2 text-sm text-success">
           Canal conectado com sucesso.
         </p>
       )}
       {error && (
-        <p className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">
+        <p className="rounded-lg border border-danger/30 bg-danger/10 px-4 py-2 text-sm text-danger">
           Não foi possível conectar o canal: {error}
         </p>
       )}
@@ -97,7 +89,7 @@ export default async function ChannelsPage(props: PageProps<"/channels">) {
             <Card key={channel.id}>
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle className="text-base">{channel.name}</CardTitle>
-                <Badge variant={channel.connection_status === "connected" ? "default" : "outline"}>
+                <Badge variant={channel.connection_status === "connected" ? "success" : "outline"}>
                   {statusLabel(channel.connection_status ?? channel.status)}
                 </Badge>
               </CardHeader>
@@ -109,7 +101,7 @@ export default async function ChannelsPage(props: PageProps<"/channels">) {
                 <div className="flex items-center justify-between">
                   <span>{formatLastSynced(channel.last_synced_at)}</span>
                   {channel.connection_status === "connected" && (
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap justify-end gap-2">
                       <form action={triggerSyncAction}>
                         <input type="hidden" name="channel_id" value={channel.id} />
                         <Button type="submit" variant="outline" size="sm">
@@ -144,7 +136,7 @@ export default async function ChannelsPage(props: PageProps<"/channels">) {
                   )}
                 </div>
                 {intelligence[index].channel_profile && (
-                  <div className="mt-1 rounded-md border border-border bg-muted/30 p-3">
+                  <div className="mt-1 rounded-lg border border-border bg-surface p-3">
                     <p className="text-xs font-medium uppercase tracking-wide text-foreground">
                       Diagnóstico
                     </p>
@@ -166,7 +158,7 @@ export default async function ChannelsPage(props: PageProps<"/channels">) {
                   </div>
                 )}
                 {dna[index] && (
-                  <div className="mt-1 rounded-md border border-border bg-muted/30 p-3">
+                  <div className="mt-1 rounded-lg border border-border bg-surface p-3">
                     <p className="text-xs font-medium uppercase tracking-wide text-foreground">
                       DNA do Canal — v{dna[index]?.version} ({dna[index]?.status}) · confiança{" "}
                       {Math.round((dna[index]?.confidence ?? 0) * 100)}%
@@ -204,7 +196,7 @@ export default async function ChannelsPage(props: PageProps<"/channels">) {
                   </div>
                 )}
                 {strategy[index].active && (
-                  <div className="mt-1 rounded-md border border-border bg-muted/30 p-3">
+                  <div className="mt-1 rounded-lg border border-border bg-surface p-3">
                     <p className="text-xs font-medium uppercase tracking-wide text-foreground">
                       Estratégia atual — v{strategy[index].active?.version}
                     </p>
@@ -224,7 +216,7 @@ export default async function ChannelsPage(props: PageProps<"/channels">) {
                   </div>
                 )}
                 {strategy[index].pending_draft && (
-                  <div className="mt-1 rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
+                  <div className="mt-1 rounded-lg border border-warning/40 bg-warning/10 p-3">
                     <p className="text-xs font-medium uppercase tracking-wide text-foreground">
                       Recomendação de estratégia — v{strategy[index].pending_draft?.version} (aguardando
                       aprovação)

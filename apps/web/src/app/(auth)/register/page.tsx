@@ -19,8 +19,12 @@ export default async function RegisterPage() {
   }
 
   return (
-    <div className="flex min-h-svh flex-col items-center justify-center gap-6 bg-zinc-50 p-8 dark:bg-black">
-      <Card className="w-full max-w-sm">
+    <div className="relative flex min-h-svh flex-col items-center justify-center gap-6 overflow-hidden bg-background p-8">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,color-mix(in_oklch,var(--primary),transparent_85%),transparent_60%)]"
+      />
+      <Card className="relative w-full max-w-sm shadow-(--shadow-lg)">
         <CardHeader>
           <CardTitle>Criar conta</CardTitle>
           <CardDescription>
@@ -31,7 +35,7 @@ export default async function RegisterPage() {
           <RegisterForm />
           <p className="text-center text-sm text-muted-foreground">
             Já tem uma conta?{" "}
-            <Link href="/login" className="font-medium underline underline-offset-4">
+            <Link href="/login" className="font-medium text-primary underline-offset-4 hover:underline">
               Entrar
             </Link>
           </p>
