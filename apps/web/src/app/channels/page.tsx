@@ -5,9 +5,22 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getSessionToken } from "@/lib/session-cookie";
-import { getChannelIntelligence, listChannels, listChannelVideos } from "@/services/api/channels";
+import {
+  getChannelDNA,
+  getChannelIntelligence,
+  getChannelStrategyStatus,
+  listChannels,
+  listChannelVideos,
+} from "@/services/api/channels";
 
-import { disconnectChannelAction, triggerAnalysisAction, triggerSyncAction } from "./actions";
+import {
+  approveStrategyAction,
+  disconnectChannelAction,
+  triggerAnalysisAction,
+  triggerDNAGenerationAction,
+  triggerStrategyGenerationAction,
+  triggerSyncAction,
+} from "./actions";
 
 function formatLastSynced(lastSyncedAt: string | null): string {
   if (!lastSyncedAt) {
@@ -43,6 +56,10 @@ export default async function ChannelsPage(props: PageProps<"/channels">) {
   );
   const intelligence = await Promise.all(
     channels.map((channel) => getChannelIntelligence(token, channel.id)),
+  );
+  const dna = await Promise.all(channels.map((channel) => getChannelDNA(token, channel.id)));
+  const strategy = await Promise.all(
+    channels.map((channel) => getChannelStrategyStatus(token, channel.id)),
   );
 
   return (
@@ -105,6 +122,18 @@ export default async function ChannelsPage(props: PageProps<"/channels">) {
                           Analisar canal
                         </Button>
                       </form>
+                      <form action={triggerDNAGenerationAction}>
+                        <input type="hidden" name="channel_id" value={channel.id} />
+                        <Button type="submit" variant="outline" size="sm">
+                          Gerar DNA
+                        </Button>
+                      </form>
+                      <form action={triggerStrategyGenerationAction}>
+                        <input type="hidden" name="channel_id" value={channel.id} />
+                        <Button type="submit" variant="outline" size="sm">
+                          Gerar estratégia
+                        </Button>
+                      </form>
                       <form action={disconnectChannelAction}>
                         <input type="hidden" name="channel_id" value={channel.id} />
                         <Button type="submit" variant="outline" size="sm">
@@ -134,6 +163,108 @@ export default async function ChannelsPage(props: PageProps<"/channels">) {
                     {intelligence[index].channel_profile?.content_summary && (
                       <p className="mt-1">{intelligence[index].channel_profile?.content_summary}</p>
                     )}
+                  </div>
+                )}
+                {dna[index] && (
+                  <div className="mt-1 rounded-md border border-border bg-muted/30 p-3">
+                    <p className="text-xs font-medium uppercase tracking-wide text-foreground">
+                      DNA do Canal — v{dna[index]?.version} ({dna[index]?.status}) · confiança{" "}
+                      {Math.round((dna[index]?.confidence ?? 0) * 100)}%
+                    </p>
+                    {!!dna[index]?.content_patterns_json.content_patterns?.length && (
+                      <div className="mt-2">
+                        <p className="font-medium text-foreground">Pilares de conteúdo</p>
+                        <ul className="ml-4 list-disc">
+                          {dna[index]?.content_patterns_json.content_patterns?.map((pattern) => (
+                            <li key={pattern}>{pattern}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {!!dna[index]?.performance_patterns_json.high_performing_patterns?.length && (
+                      <div className="mt-2">
+                        <p className="font-medium text-foreground">O que performa bem</p>
+                        <ul className="ml-4 list-disc">
+                          {dna[index]?.performance_patterns_json.high_performing_patterns?.map(
+                            (pattern) => <li key={pattern}>{pattern}</li>,
+                          )}
+                        </ul>
+                      </div>
+                    )}
+                    {!!dna[index]?.publishing_patterns_json.publishing_patterns?.length && (
+                      <div className="mt-2">
+                        <p className="font-medium text-foreground">Padrão de publicação</p>
+                        <ul className="ml-4 list-disc">
+                          {dna[index]?.publishing_patterns_json.publishing_patterns?.map(
+                            (pattern) => <li key={pattern}>{pattern}</li>,
+                          )}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {strategy[index].active && (
+                  <div className="mt-1 rounded-md border border-border bg-muted/30 p-3">
+                    <p className="text-xs font-medium uppercase tracking-wide text-foreground">
+                      Estratégia atual — v{strategy[index].active?.version}
+                    </p>
+                    <p className="mt-1">{strategy[index].active?.objective}</p>
+                    <p className="mt-1">
+                      Shorts {Math.round((strategy[index].active?.shorts_ratio ?? 0) * 100)}% ·
+                      Long-form {Math.round((strategy[index].active?.long_form_ratio ?? 0) * 100)}% ·
+                      Experimental {Math.round((strategy[index].active?.experimental_ratio ?? 0) * 100)}%
+                    </p>
+                    <ul className="ml-4 mt-1 list-disc">
+                      {strategy[index].active?.pillars.map((pillar) => (
+                        <li key={pillar.id}>
+                          {pillar.name} ({Math.round(pillar.target_ratio * 100)}%)
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {strategy[index].pending_draft && (
+                  <div className="mt-1 rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
+                    <p className="text-xs font-medium uppercase tracking-wide text-foreground">
+                      Recomendação de estratégia — v{strategy[index].pending_draft?.version} (aguardando
+                      aprovação)
+                    </p>
+                    <p className="mt-1">{strategy[index].pending_draft?.objective}</p>
+                    <p className="mt-1">
+                      Shorts {Math.round((strategy[index].pending_draft?.shorts_ratio ?? 0) * 100)}% ·
+                      Long-form{" "}
+                      {Math.round((strategy[index].pending_draft?.long_form_ratio ?? 0) * 100)}% ·
+                      Experimental{" "}
+                      {Math.round((strategy[index].pending_draft?.experimental_ratio ?? 0) * 100)}%
+                    </p>
+                    <ul className="ml-4 mt-1 list-disc">
+                      {strategy[index].pending_draft?.pillars.map((pillar) => (
+                        <li key={pillar.id}>
+                          {pillar.name} ({Math.round(pillar.target_ratio * 100)}%)
+                        </li>
+                      ))}
+                    </ul>
+                    {!!strategy[index].pending_draft?.strategy_json.recommendations?.length && (
+                      <div className="mt-2">
+                        <p className="font-medium text-foreground">Recomendações</p>
+                        <ul className="ml-4 list-disc">
+                          {strategy[index].pending_draft?.strategy_json.recommendations?.map((rec) => (
+                            <li key={rec}>{rec}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    <form action={approveStrategyAction} className="mt-2">
+                      <input type="hidden" name="channel_id" value={channel.id} />
+                      <input
+                        type="hidden"
+                        name="strategy_id"
+                        value={strategy[index].pending_draft?.id}
+                      />
+                      <Button type="submit" size="sm">
+                        Aprovar estratégia
+                      </Button>
+                    </form>
                   </div>
                 )}
               </CardContent>

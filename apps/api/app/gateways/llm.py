@@ -166,6 +166,42 @@ _CANNED_RESPONSES: dict[str, dict[str, Any]] = {
         "confidence": 0.55,
         "evidence": ["Inferido a partir de titulos/descricoes - sem YouTube Analytics real ainda"],
     },
+    "strategy_agent.v1": {
+        "objectives": [
+            "Crescer inscritos qualificados no nicho de tecnologia",
+            "Aumentar retencao media dos videos long_form",
+        ],
+        "content_mix": {"shorts_ratio": 0.35, "long_form_ratio": 0.55},
+        "content_pillars": [
+            {
+                "name": "Reviews em profundidade",
+                "description": "Analises completas de produtos de tecnologia",
+                "target_ratio": 0.4,
+                "priority": 3,
+            },
+            {
+                "name": "Comparativos",
+                "description": "Comparacoes diretas entre produtos concorrentes",
+                "target_ratio": 0.3,
+                "priority": 2,
+            },
+            {
+                "name": "Bastidores/Shorts",
+                "description": "Teasers curtos dos videos longos",
+                "target_ratio": 0.3,
+                "priority": 1,
+            },
+        ],
+        "publishing_frequency": {"long_form": "2x por semana", "short": "5x por semana"},
+        "format_strategy": {"primary": "long_form", "secondary": "short"},
+        "experimental_ratio": 0.1,
+        "recommendations": [
+            "Testar thumbnails customizadas em todos os Shorts",
+            "Concentrar publicacoes long_form no inicio do mes, como no historico",
+        ],
+        "risks": ["Amostra de apenas 5 videos - confianca limitada ate mais dados"],
+        "confidence": 0.58,
+    },
 }
 
 

@@ -291,3 +291,235 @@ def test_get_intelligence_after_analysis_returns_profiles(client, db_session):
     assert body["channel_profile"] is not None
     assert body["audience_profile"] is not None
     assert body["channel_profile"]["primary_language"] == "pt-BR"
+
+
+def test_get_dna_before_generation_returns_null(client):
+    token = _register_and_get_token(client)
+    channel = _connect_channel(client, token)
+
+    response = client.get(f"/api/v1/channels/{channel['id']}/dna", headers=_auth_headers(token))
+
+    assert response.status_code == 200
+    assert response.json() is None
+
+
+def test_trigger_dna_generation_creates_job(client):
+    token = _register_and_get_token(client)
+    channel = _connect_channel(client, token)
+
+    response = client.post(
+        f"/api/v1/channels/{channel['id']}/dna/generate", headers=_auth_headers(token)
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "job_id" in body
+    assert "correlation_id" in body
+
+
+def test_trigger_dna_generation_unknown_channel_returns_404(client):
+    token = _register_and_get_token(client)
+
+    response = client.post(
+        f"/api/v1/channels/{uuid.uuid4()}/dna/generate", headers=_auth_headers(token)
+    )
+
+    assert response.status_code == 404
+
+
+def test_get_dna_after_generation_returns_active_version(client, db_session):
+    import asyncio
+
+    from app.gateways.llm import FakeLLMGateway
+    from app.gateways.youtube import FakeYouTubeGateway
+    from app.models.enums import SyncType
+    from app.services.channel_dna import ChannelDNAService
+    from app.services.channel_sync import ChannelSyncService
+
+    token = _register_and_get_token(client)
+    channel = _connect_channel(client, token)
+    channel_id = uuid.UUID(channel["id"])
+    organization_id = uuid.UUID(channel["organization_id"])
+
+    async def _seed() -> None:
+        await ChannelSyncService(db_session, gateway=FakeYouTubeGateway()).run_sync(
+            channel_id=channel_id, organization_id=organization_id, sync_type=SyncType.MANUAL
+        )
+        await ChannelDNAService(db_session, llm_gateway=FakeLLMGateway()).generate_new_version(
+            channel_id=channel_id, organization_id=organization_id
+        )
+
+    asyncio.run(_seed())
+
+    dna_response = client.get(f"/api/v1/channels/{channel['id']}/dna", headers=_auth_headers(token))
+    history_response = client.get(
+        f"/api/v1/channels/{channel['id']}/dna/history", headers=_auth_headers(token)
+    )
+
+    assert dna_response.status_code == 200
+    assert dna_response.json()["status"] == "active"
+    assert dna_response.json()["version"] == 1
+    assert history_response.status_code == 200
+    assert len(history_response.json()) == 1
+
+
+def test_brand_profile_starts_empty_then_can_be_set(client):
+    token = _register_and_get_token(client)
+    channel = _connect_channel(client, token)
+
+    before = client.get(
+        f"/api/v1/channels/{channel['id']}/brand-profile", headers=_auth_headers(token)
+    )
+    assert before.status_code == 200
+    assert before.json() is None
+
+    put_response = client.put(
+        f"/api/v1/channels/{channel['id']}/brand-profile",
+        headers=_auth_headers(token),
+        json={"name": "Acme Brand", "colors_json": {"primary": "#000000"}},
+    )
+    assert put_response.status_code == 200
+    assert put_response.json()["name"] == "Acme Brand"
+
+    after = client.get(
+        f"/api/v1/channels/{channel['id']}/brand-profile", headers=_auth_headers(token)
+    )
+    assert after.json()["name"] == "Acme Brand"
+    assert after.json()["colors_json"] == {"primary": "#000000"}
+
+
+def _seed_active_dna(db_session, channel_id, organization_id):
+    import asyncio
+
+    from app.gateways.llm import FakeLLMGateway
+    from app.gateways.youtube import FakeYouTubeGateway
+    from app.models.enums import SyncType
+    from app.services.channel_dna import ChannelDNAService
+    from app.services.channel_sync import ChannelSyncService
+
+    async def _seed() -> None:
+        await ChannelSyncService(db_session, gateway=FakeYouTubeGateway()).run_sync(
+            channel_id=channel_id, organization_id=organization_id, sync_type=SyncType.MANUAL
+        )
+        await ChannelDNAService(db_session, llm_gateway=FakeLLMGateway()).generate_new_version(
+            channel_id=channel_id, organization_id=organization_id
+        )
+
+    asyncio.run(_seed())
+
+
+def test_get_strategy_before_generation_returns_nulls(client):
+    token = _register_and_get_token(client)
+    channel = _connect_channel(client, token)
+
+    response = client.get(
+        f"/api/v1/channels/{channel['id']}/strategy", headers=_auth_headers(token)
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"active": None, "pending_draft": None}
+
+
+def test_trigger_strategy_generation_unknown_channel_returns_404(client):
+    token = _register_and_get_token(client)
+
+    response = client.post(
+        f"/api/v1/channels/{uuid.uuid4()}/strategy/generate", headers=_auth_headers(token)
+    )
+
+    assert response.status_code == 404
+
+
+def test_trigger_strategy_generation_creates_job(client, db_session):
+    token = _register_and_get_token(client)
+    channel = _connect_channel(client, token)
+    channel_id = uuid.UUID(channel["id"])
+    organization_id = uuid.UUID(channel["organization_id"])
+    _seed_active_dna(db_session, channel_id, organization_id)
+
+    response = client.post(
+        f"/api/v1/channels/{channel['id']}/strategy/generate", headers=_auth_headers(token)
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "job_id" in body
+    assert "correlation_id" in body
+
+
+def test_strategy_generate_then_approve_flow(client, db_session):
+    from app.gateways.llm import FakeLLMGateway
+    from app.services.channel_strategy import ChannelStrategyService
+
+    token = _register_and_get_token(client)
+    channel = _connect_channel(client, token)
+    channel_id = uuid.UUID(channel["id"])
+    organization_id = uuid.UUID(channel["organization_id"])
+    _seed_active_dna(db_session, channel_id, organization_id)
+
+    import asyncio
+
+    strategy = asyncio.run(
+        ChannelStrategyService(db_session, llm_gateway=FakeLLMGateway()).generate_new_version(
+            channel_id=channel_id, organization_id=organization_id
+        )
+    )
+
+    status_before = client.get(
+        f"/api/v1/channels/{channel['id']}/strategy", headers=_auth_headers(token)
+    )
+    assert status_before.json()["active"] is None
+    assert status_before.json()["pending_draft"]["id"] == str(strategy.id)
+    assert len(status_before.json()["pending_draft"]["pillars"]) == 3
+
+    approve_response = client.post(
+        f"/api/v1/channels/{channel['id']}/strategy/{strategy.id}/approve",
+        headers=_auth_headers(token),
+    )
+    assert approve_response.status_code == 200
+    assert approve_response.json()["status"] == "active"
+
+    status_after = client.get(
+        f"/api/v1/channels/{channel['id']}/strategy", headers=_auth_headers(token)
+    )
+    assert status_after.json()["active"]["id"] == str(strategy.id)
+    assert status_after.json()["pending_draft"] is None
+
+    history_response = client.get(
+        f"/api/v1/channels/{channel['id']}/strategy/history", headers=_auth_headers(token)
+    )
+    assert len(history_response.json()) == 1
+
+
+def test_strategy_rules_endpoints(client, db_session):
+    from app.gateways.llm import FakeLLMGateway
+    from app.services.channel_strategy import ChannelStrategyService
+
+    token = _register_and_get_token(client)
+    channel = _connect_channel(client, token)
+    channel_id = uuid.UUID(channel["id"])
+    organization_id = uuid.UUID(channel["organization_id"])
+    _seed_active_dna(db_session, channel_id, organization_id)
+
+    import asyncio
+
+    strategy = asyncio.run(
+        ChannelStrategyService(db_session, llm_gateway=FakeLLMGateway()).generate_new_version(
+            channel_id=channel_id, organization_id=organization_id
+        )
+    )
+
+    create_response = client.post(
+        f"/api/v1/channels/{channel['id']}/strategy/{strategy.id}/rules",
+        headers=_auth_headers(token),
+        json={"rule_type": "publishing_constraint", "rule_json": {"max_long_form_per_day": 1}},
+    )
+    assert create_response.status_code == 200
+    assert create_response.json()["rule_type"] == "publishing_constraint"
+
+    list_response = client.get(
+        f"/api/v1/channels/{channel['id']}/strategy/{strategy.id}/rules",
+        headers=_auth_headers(token),
+    )
+    assert list_response.status_code == 200
+    assert len(list_response.json()) == 1

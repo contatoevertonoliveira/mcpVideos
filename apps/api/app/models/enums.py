@@ -131,3 +131,21 @@ class AudienceProfileSource(StrEnum):
     USER = "user"
     INFERRED = "inferred"
     MIXED = "mixed"
+
+
+class ChannelDNAStatus(StrEnum):
+    """Documento 03, secao 16. Apenas uma versao ACTIVE por canal."""
+
+    DRAFT = "draft"
+    ACTIVE = "active"
+    SUPERSEDED = "superseded"
+
+
+class ContentStrategyStatus(StrEnum):
+    """Documento 03, secao 19. Apenas uma versao ACTIVE por canal - a
+    transicao draft->active exige aprovacao explicita (Documento 05 sec.
+    8: Strategy Agent "nao pode ativar estrategia sozinho sem policy")."""
+
+    DRAFT = "draft"
+    ACTIVE = "active"
+    ARCHIVED = "archived"

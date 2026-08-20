@@ -8,7 +8,13 @@ celery_app = Celery(
     "mcp_videos",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=["app.core.tasks", "app.tasks.channel_sync", "app.tasks.channel_intelligence"],
+    include=[
+        "app.core.tasks",
+        "app.tasks.channel_sync",
+        "app.tasks.channel_intelligence",
+        "app.tasks.channel_dna",
+        "app.tasks.channel_strategy",
+    ],
 )
 
 celery_app.conf.update(

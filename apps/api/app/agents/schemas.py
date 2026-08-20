@@ -1,11 +1,11 @@
-"""Structured output contracts for Fase 06 agents (Documento 05, secoes 6-7).
+"""Structured output contracts for the project's agents (Documento 05).
 
 Exact shape of the JSON each agent must return - kept separate from the
-DB models (``ChannelProfile``/``AudienceProfile``) on purpose: the agent
-output is richer than what Fase 06's lightweight profile tables persist
-(Documento 03 secoes 15/17). The full structured output (patterns,
-anomalies, evidence) is the raw material Channel DNA will version in
-Fase 07 - Fase 06 only distills it into a short summary.
+DB models on purpose: the agent output is richer than what the
+lightweight profile tables persist (Documento 03 secoes 15/17). The full
+structured output (patterns, anomalies, evidence) is the raw material
+Channel DNA versions (Fase 07); Fase 06's ChannelProfile/AudienceProfile
+only distill it into a short summary.
 """
 
 from __future__ import annotations
@@ -34,3 +34,27 @@ class AudienceAnalystOutput(BaseModel):
     format_preferences: list[str] = Field(default_factory=list)
     confidence: float
     evidence: list[str] = Field(default_factory=list)
+
+
+class ContentPillarSuggestion(BaseModel):
+    name: str
+    description: str = ""
+    target_ratio: float
+    priority: int = 0
+
+
+class StrategyAgentOutput(BaseModel):
+    """Documento 05, secao 8. ``content_mix`` carries the shorts/long-form
+    split (keys ``shorts_ratio``/``long_form_ratio``) - kept as a generic
+    dict here as the doc specifies, mapped to ContentStrategy's dedicated
+    columns by the service."""
+
+    objectives: list[str] = Field(default_factory=list)
+    content_mix: dict[str, float] = Field(default_factory=dict)
+    content_pillars: list[ContentPillarSuggestion] = Field(default_factory=list)
+    publishing_frequency: dict[str, str] = Field(default_factory=dict)
+    format_strategy: dict[str, str] = Field(default_factory=dict)
+    experimental_ratio: float = 0.0
+    recommendations: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    confidence: float

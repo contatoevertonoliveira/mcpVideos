@@ -1,7 +1,13 @@
 import "server-only";
 
 import { getApiInternalUrl } from "@/lib/env";
-import type { ChannelIntelligence, ChannelSummary, SourceVideoSummary } from "@/types/channel";
+import type {
+  ChannelDNA,
+  ChannelIntelligence,
+  ChannelStrategyStatus,
+  ChannelSummary,
+  SourceVideoSummary,
+} from "@/types/channel";
 
 function authHeaders(token: string): HeadersInit {
   return { Authorization: `Bearer ${token}` };
@@ -104,4 +110,62 @@ export async function getChannelIntelligence(
     return { channel_profile: null, audience_profile: null };
   }
   return (await response.json()) as ChannelIntelligence;
+}
+
+export async function triggerChannelDNAGeneration(token: string, channelId: string): Promise<void> {
+  await fetch(`${getApiInternalUrl()}/api/v1/channels/${channelId}/dna/generate`, {
+    method: "POST",
+    headers: authHeaders(token),
+    cache: "no-store",
+  }).catch(() => undefined);
+}
+
+export async function getChannelDNA(token: string, channelId: string): Promise<ChannelDNA | null> {
+  const response = await fetch(`${getApiInternalUrl()}/api/v1/channels/${channelId}/dna`, {
+    headers: authHeaders(token),
+    cache: "no-store",
+  }).catch(() => null);
+
+  if (!response || !response.ok) {
+    return null;
+  }
+  return (await response.json()) as ChannelDNA | null;
+}
+
+export async function triggerChannelStrategyGeneration(
+  token: string,
+  channelId: string,
+): Promise<void> {
+  await fetch(`${getApiInternalUrl()}/api/v1/channels/${channelId}/strategy/generate`, {
+    method: "POST",
+    headers: authHeaders(token),
+    cache: "no-store",
+  }).catch(() => undefined);
+}
+
+export async function getChannelStrategyStatus(
+  token: string,
+  channelId: string,
+): Promise<ChannelStrategyStatus> {
+  const response = await fetch(`${getApiInternalUrl()}/api/v1/channels/${channelId}/strategy`, {
+    headers: authHeaders(token),
+    cache: "no-store",
+  }).catch(() => null);
+
+  if (!response || !response.ok) {
+    return { active: null, pending_draft: null };
+  }
+  return (await response.json()) as ChannelStrategyStatus;
+}
+
+export async function approveChannelStrategy(
+  token: string,
+  channelId: string,
+  strategyId: string,
+): Promise<void> {
+  await fetch(`${getApiInternalUrl()}/api/v1/channels/${channelId}/strategy/${strategyId}/approve`, {
+    method: "POST",
+    headers: authHeaders(token),
+    cache: "no-store",
+  }).catch(() => undefined);
 }

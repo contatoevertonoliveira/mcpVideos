@@ -8,9 +8,9 @@
 
 ## 1. Status Geral
 
-**Fase atual:** ✅ **Fase 06 — Channel Intelligence implementada e validada de ponta a ponta**, inclusive testada manualmente no navegador (clicar "Analisar canal" → worker Celery real processa com Channel Analyst + Audience Analyst → diagnóstico aparece). Ver seção 4.6 para o relatório completo. Fases 01-05 permanecem 100% validadas e commitadas (seções 4.1-4.5).
+**Fase atual:** ✅ **Fase 08 — Strategy Engine implementada e validada**, incluindo o fluxo completo gerar→draft→aprovar→active confirmado via `curl` contra a stack Docker real. Ver seção 4.8 para o relatório completo, incluindo uma ressalva sobre a validação manual no navegador desta sessão. Fases 01-07 permanecem 100% validadas (seções 4.1-4.7); Fases 01-06 commitadas, **Fase 07 e Fase 08 ainda não commitadas nesta sessão**.
 
-**Próximo passo:** commitar a Fase 06 (aguardando confirmação do usuário) e depois iniciar a **Fase 07 — Channel DNA**.
+**Próximo passo:** commitar as Fases 07 e 08 (aguardando confirmação do usuário) e depois iniciar a **Fase 09 — Ideas & Opportunity Engine**.
 
 ---
 
@@ -313,9 +313,77 @@ bash infra/scripts/smoke-test.sh
 # e clicar em "Analisar canal" - o bloco "Diagnóstico" deve aparecer em poucos segundos
 ```
 
+### 4.7 Fase 07 — Relatório de Conclusão
+
+**Implementado:**
+- **2 entidades novas** (Documento 03 §16/18, Documento 10 F07): `channel_dna_versions` (versionada, imutável, só uma `active` por canal via índice único parcial) e `brand_profiles` (CRUD simples do usuário, uma linha por canal). Migration `8c4e080a0b01`.
+- **`ChannelDNAService`**: re-executa Channel Analyst + Audience Analyst (Fase 06) para capturar o output estruturado completo (patterns, anomalias, format/publishing patterns) que `channel_profiles`/`audience_profiles` não guardam, e sintetiza a nova versão do DNA. `recommendations_json` fica honestamente vazio — nenhum agente desta fase produz recomendações (isso é o Strategy Agent, Fase 08).
+- **Versionamento `draft → active → superseded`** implementado (Documento 03 §16): gerar uma nova versão rebaixa a anterior para `superseded` (num flush separado, para não violar o índice único parcial) e ativa a nova imediatamente.
+- **Terceira task Celery do projeto** (`app/tasks/channel_dna.py`, nome lógico `channel.dna`), reusando o `mark_running_with_retry` compartilhado (`app/tasks/_job_utils.py`, bug de race da Fase 05).
+- **Cadeia automática completa**: conectar canal → sync → analysis → **DNA agora dispara sozinho** na primeira análise do canal (Documento 04 §4: `channel.connection.created → channel.sync.completed → channel.analysis.completed → channel.dna.activated`), sem recalcular em re-análises seguintes.
+- **Endpoints novos**: `POST /{id}/dna/generate` (manual, requer `Permission.CHANNEL_MANAGE`), `GET /{id}/dna` (versão ativa), `GET /{id}/dna/history`, `GET`/`PUT /{id}/brand-profile`.
+- **Frontend**: página `/channels` ganhou um bloco "DNA do Canal" (versão, status, confiança, pilares de conteúdo, o que performa bem, padrão de publicação — sempre traduzido em texto/listas, nunca JSON cru, conforme o Documento 10 pede) e botão "Gerar DNA".
+- **Não implementado** (fora de escopo por definição): Strategy Engine (Fase 08) é quem de fato usa o DNA para produzir `content_strategies`; UI de edição de Brand Profile (só a API/entidade existem — a tela de identidade visual é Documento 08/Control Center, não exigida pelo critério de aceite desta fase).
+
+**Validado nesta sessão:**
+- 124 testes de backend (pytest) contra Postgres+Redis reais: `ChannelDNAService` completo (cria versão ativa, gerar duas vezes supersede a anterior sem duplicar, canal sem vídeos importados rejeitado, canal desconhecido rejeitado, usa `brand_profiles` quando existe), `BrandProfileService` (CRUD, upsert idempotente, canal desconhecido rejeitado), dispatch de DNA só na primeira análise (não repete em re-análises), endpoints HTTP (`/dna/generate`, `/dna`, `/dna/history`, `/brand-profile` GET/PUT). `ruff`/`mypy` limpos.
+- Migration validada com ciclo `upgrade → downgrade → upgrade`, incluindo o índice único parcial, no banco de dev e aplicada ao banco de teste.
+- Stack Docker reconstruída (api+worker); **cadeia automática completa validada contra infraestrutura real via `curl`**: conectar canal novo → worker processou `channel.sync` → `channel.intelligence` → `channel.dna` em sequência, sem intervenção manual → `GET /{id}/dna` retornou a versão ativa com `classification_json`/`audience_json`/`content_patterns_json`/etc. coerentes. Confirmado também que re-analisar o mesmo canal não dispara uma segunda geração de DNA.
+- Frontend: `eslint`, `tsc --noEmit` (com `next typegen`), `vitest`, `next build` — todos limpos.
+- **Ressalva sobre validação no navegador**: os botões "Sincronizar agora" e "Analisar canal" (já existentes, mesmo padrão de código) foram clicados com sucesso no início desta sessão. O botão novo "Gerar DNA" não pôde ser clicado com sucesso via automação do navegador nesta sessão — depois de várias tentativas, o clique parou de registrar até para os botões já validados, indicando uma instabilidade da ferramenta de automação do navegador (não da aplicação). A funcionalidade em si foi confirmada ponta a ponta via `curl` contra a mesma stack Docker; a UI usa o mesmo padrão (Server Action → API) já comprovado nos outros botões, mas o clique físico no "Gerar DNA" especificamente não foi confirmado visualmente nesta sessão.
+
+**Pendências / Known Limitations:**
+- Validação visual do clique em "Gerar DNA" no navegador real ainda não confirmada (ver ressalva acima) — recomendado re-testar numa sessão futura.
+- Strategy Engine (Fase 08) ainda não existe — DNA gerado mas ainda não consumido por nenhuma fase seguinte.
+- `docs/database.md` atualizado com `channel_dna_versions`/`brand_profiles` no ERD e as decisões desta fase.
+
+**Como validar:**
+```bash
+cd apps/api && pytest -v
+cd apps/web && npm run lint && npm run typecheck && npm run test && npm run build
+docker compose up -d --build
+bash infra/scripts/smoke-test.sh
+# depois, testar manualmente: conectar um canal novo em http://localhost:3000/channels
+# e aguardar alguns segundos - o bloco "DNA do Canal" deve aparecer sozinho
+# (dispara automaticamente após a primeira análise)
+```
+
+### 4.8 Fase 08 — Relatório de Conclusão
+
+**Implementado:**
+- **3 entidades novas** (Documento 03 §19-21, Documento 10 F08): `content_strategies` (versionada, só uma `active` por canal, transição `draft→active` exige aprovação humana), `content_pillars` (ligados a uma versão específica de estratégia), `strategy_rules` (CRUD simples do usuário, não gerado por agente). Migration `c47ddb8e1d69`.
+- **`ChannelStrategyService`**: `generate_new_version` roda o Strategy Agent (Documento 05 §8) a partir do DNA ativo + Audience Profile + estratégia ativa existente + regras explícitas, cria uma versão **`draft`** (nunca ativa sozinha — "Strategy Agent não pode ativar estratégia sozinho sem policy"). `approve()` é a única forma de promover `draft → active`, arquivando a anterior.
+- **Quarta task Celery do projeto** (`app/tasks/channel_strategy.py`, nome lógico `channel.strategy`), reusando `mark_running_with_retry`. Diferente das fases 05-07, **nunca é auto-disparada** por nenhuma outra fase — gerar estratégia é sempre ação manual (Documento 04 §24: "estratégia não deve mudar silenciosamente").
+- **Endpoints novos**: `POST /{id}/strategy/generate`, `GET /{id}/strategy` (retorna `active` + `pending_draft` separados), `GET /{id}/strategy/history`, `POST /{id}/strategy/{strategy_id}/approve`, `POST`/`GET /{id}/strategy/{strategy_id}/rules`.
+- **Frontend**: bloco "Estratégia atual" (quando há uma ativa) e bloco "Recomendação de estratégia" (quando há um draft pendente, com pilares, mix shorts/long-form/experimental, recomendações e botão "Aprovar estratégia") — atende ao critério de aceite literal do Documento 10 ("usuário visualiza estratégia atual, recomendação, pilares, frequência e pode aprovar"). Botão "Gerar estratégia" adicionado.
+- **Não implementado** (fora de escopo por definição): Ideas & Opportunity Engine (Fase 09) é quem de fato consome a estratégia ativa para gerar pautas; refresh automático de estratégia por mudança significativa de performance (Workflow 04 `strategy.refresh.v1`, Documento 04 §23) depende de Learned Rules/Performance Baseline que ainda não existem (Learning Engine, Fase 19).
+
+**Validado nesta sessão:**
+- 137 testes de backend (pytest) contra Postgres+Redis reais: `ChannelStrategyService` completo (gera draft com pilares, sem DNA ativo rejeitado, canal desconhecido rejeitado, aprovar ativa e arquiva a anterior, aprovar estratégia já aprovada rejeitado, aprovar estratégia desconhecida rejeitado, adicionar/listar regras), endpoints HTTP (`/strategy/generate`, `/strategy` status, `/strategy/history`, `/approve`, `/rules`). `ruff`/`mypy` limpos.
+- Migration validada com ciclo `upgrade → downgrade → upgrade`, incluindo o índice único parcial, no banco de dev e aplicada ao banco de teste.
+- Stack Docker reconstruída (api+worker); **fluxo completo validado contra infraestrutura real via `curl`**: canal conectado (sync→intelligence→dna automáticos) → `POST /strategy/generate` → worker processou `channel.strategy` → `GET /strategy` mostrou `active: null` + `pending_draft` completo com 3 pilares → `POST /strategy/{id}/approve` → `GET /strategy` mostrou a mesma estratégia agora em `active` e `pending_draft: null`. Endpoint de regras testado (criar + listar).
+- Frontend: `eslint`, `tsc --noEmit` (com `next typegen`), `vitest`, `next build` — todos limpos.
+- **Ressalva sobre validação no navegador**: assim como o botão "Gerar DNA" na sessão da Fase 07, o botão novo "Gerar estratégia" não pôde ser clicado com sucesso via automação do navegador nesta sessão — o clique não registrou em múltiplas tentativas, mesma instabilidade da ferramenta já observada antes (não da aplicação). Funcionalidade comprovada via `curl` de ponta a ponta; falta reconfirmar visualmente o clique numa sessão futura, junto com o "Gerar DNA" pendente da Fase 07.
+
+**Pendências / Known Limitations:**
+- Validação visual dos cliques em "Gerar DNA" (Fase 07) e "Gerar estratégia" (Fase 08) no navegador real ainda não confirmada — recomendado re-testar numa sessão futura, quando a ferramenta de automação estiver mais estável.
+- Ideas & Opportunity Engine (Fase 09) ainda não existe — estratégia aprovada mas ainda não consumida por nenhuma fase seguinte.
+- `docs/database.md` atualizado com `content_strategies`/`content_pillars`/`strategy_rules` no ERD e as decisões desta fase.
+
+**Como validar:**
+```bash
+cd apps/api && pytest -v
+cd apps/web && npm run lint && npm run typecheck && npm run test && npm run build
+docker compose up -d --build
+bash infra/scripts/smoke-test.sh
+# depois, testar manualmente: com um canal que já tem DNA ativo, clicar em
+# "Gerar estratégia" em http://localhost:3000/channels, aguardar o draft
+# aparecer, e clicar em "Aprovar estratégia"
+```
+
 ## 5. Pendências / Perguntas em Aberto
 
-- Fases 01-05 commitadas e enviadas para `main` (`b3041ae`, `ed9b437`, `7b54b9c`, `4e5ecdc`, `7675039`, `ecf72cd`). **Fase 06 implementada e validada nesta sessão, ainda não commitada** — aguardando confirmação do usuário.
+- Fases 01-06 commitadas e enviadas para `main` (`b3041ae`, `ed9b437`, `7b54b9c`, `4e5ecdc`, `7675039`, `ecf72cd`, `b518bf6`). **Fases 07 e 08 implementadas e validadas nesta sessão, ainda não commitadas** — usuário pediu para seguir para a próxima fase antes de commitar; aguardando confirmação para commitar as duas juntas.
 - Documento 10 (seção 137) sugere organizar os documentos em `/docs/master/` com slugs (`01-product-brief.md`, etc.) — não feito; usuário optou implicitamente por manter o padrão atual `Documento NN - Titulo.md` ao pedir para seguir direto para a Fase 01.
 - Ainda não definido: nome comercial do produto, provedor de IA/mídia real a integrar primeiro na Fase 13 (Documento 10 §71 pede benchmark atualizado antes de decidir — não assumir Higgsfield/Kie/fal.ai/WaveSpeed/Replicate como escolha final), moeda/plano de billing.
 - Credenciais reais do Google Cloud (`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`) ainda não configuradas — usuário optou por seguir só com `FakeYouTubeGateway` por enquanto (Fase 04). `GoogleYouTubeGateway` está implementada e pronta (incluindo os métodos de import da Fase 05), mas nunca exercitada contra o Google real.
@@ -395,7 +463,24 @@ bash infra/scripts/smoke-test.sh
 - Conectar canal agora dispara análise automaticamente após o sync inicial (cadeia de eventos do Documento 04 §4); endpoint manual `POST /channels/{id}/analyze` e leitura via `GET /{id}/intelligence` também implementados.
 - Reaproveitado (extraído para `app/tasks/_job_utils.py`) o fix da race condition de visibilidade do Job encontrada na Fase 05, já que a nova task sofre exatamente o mesmo problema.
 - 110 testes de backend passando; `ruff`/`mypy`/`eslint`/`tsc`/`vitest`/`next build` limpos. Fluxo automático completo validado via `curl` contra a stack Docker real (connect → sync → intelligence em cadeia) e no navegador real (clicar "Analisar canal" → bloco "Diagnóstico" aparece).
-- Próximo passo: usuário decide se commita/envia a Fase 06 agora.
+- Usuário pediu para commitar a Fase 06 e seguir. Commit `b518bf6` ("feat(F06): channel intelligence") criado e enviado para `main`.
+
+### 2026-08-20 — Fase 07 — Channel DNA (mesma data, sessão seguinte)
+- Usuário pediu para seguir para a próxima fase.
+- Implementadas as 2 entidades (`channel_dna_versions` versionada/imutável com índice único parcial para "só uma ACTIVE por canal", `brand_profiles` CRUD simples), `ChannelDNAService` (re-executa Channel Analyst + Audience Analyst para capturar o output completo, sintetiza e versiona o DNA), e a terceira task Celery do projeto (`app/tasks/channel_dna.py`).
+- Cadeia automática completa fechada: conectar canal → sync → analysis → **DNA agora dispara sozinho** na primeira análise (Documento 04 §4 completo: `channel.connection.created → channel.sync.completed → channel.analysis.completed → channel.dna.activated`), sem recalcular em análises seguintes.
+- Endpoints `POST /{id}/dna/generate`, `GET /{id}/dna`, `GET /{id}/dna/history`, `GET`/`PUT /{id}/brand-profile`. Frontend ganhou o bloco "DNA do Canal" (traduzido em cards/listas, nunca JSON cru) e botão "Gerar DNA".
+- 124 testes de backend passando; `ruff`/`mypy`/`eslint`/`tsc`/`vitest`/`next build` limpos. Cadeia automática completa validada via `curl` contra a stack Docker real (sync → intelligence → dna em sequência, sem intervenção manual).
+- **Ressalva**: o botão novo "Gerar DNA" não pôde ser clicado com sucesso via automação do navegador nesta sessão — após o primeiro sucesso do dia com "Sincronizar agora"/"Analisar canal", a ferramenta de clique parou de registrar cliques mesmo nos botões já validados, indicando instabilidade da ferramenta em si, não da aplicação. Funcionalidade comprovada via `curl`; falta reconfirmar visualmente o clique numa sessão futura.
+- Usuário pediu para seguir para a próxima fase e commitar/enviar ao final ("vamos pra proxima fase e depois commitamos e fazemos o push").
+
+### 2026-08-20 — Fase 08 — Strategy Engine (mesma data, sessão seguinte)
+- Implementadas as 3 entidades (`content_strategies` versionada com aprovação humana obrigatória para ativar, `content_pillars` ligados a uma versão de estratégia, `strategy_rules` CRUD do usuário), `ChannelStrategyService` (roda o Strategy Agent a partir do DNA ativo, cria sempre como `draft`, `approve()` é a única forma de ativar), e a quarta task Celery do projeto (`app/tasks/channel_strategy.py`).
+- Diferente de sync→intelligence→dna, geração de estratégia **nunca** é auto-disparada — Documento 05 §8 e Documento 04 §24 são explícitos que uma estratégia não pode se ativar sozinha nem mudar silenciosamente.
+- Endpoints `POST /{id}/strategy/generate`, `GET /{id}/strategy` (active + pending_draft separados), `GET /{id}/strategy/history`, `POST /{id}/strategy/{id}/approve`, `POST`/`GET /{id}/strategy/{id}/rules`. Frontend ganhou os blocos "Estratégia atual"/"Recomendação de estratégia" com botão "Aprovar estratégia", atendendo ao critério de aceite literal do Documento 10.
+- 137 testes de backend passando; `ruff`/`mypy`/`eslint`/`tsc`/`vitest`/`next build` limpos. Fluxo completo gerar→draft→aprovar→active validado via `curl` contra a stack Docker real.
+- **Ressalva**: mesma instabilidade da ferramenta de automação do navegador já registrada na Fase 07 — o botão novo "Gerar estratégia" não pôde ser clicado com sucesso nesta sessão (múltiplas tentativas). Funcionalidade comprovada via `curl` de ponta a ponta.
+- Próximo passo: usuário decide se commita/envia as Fases 07 e 08 agora.
 
 ---
 

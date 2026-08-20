@@ -2,7 +2,7 @@
 
 > Mantido conforme Documento 03, seção 133. Atualizar a cada fase que alterar o domínio.
 
-Última atualização: Fase 06 — Channel Intelligence.
+Última atualização: Fase 08 — Strategy Engine.
 
 ## ERD
 
@@ -22,6 +22,11 @@ erDiagram
     SOURCE_VIDEO ||--o{ SOURCE_VIDEO_METRIC : "historical snapshots"
     CHANNEL ||--o| CHANNEL_PROFILE : "has one"
     CHANNEL ||--o{ AUDIENCE_PROFILE : "versioned history"
+    CHANNEL ||--o{ CHANNEL_DNA_VERSION : "versioned history"
+    CHANNEL ||--o| BRAND_PROFILE : "has one"
+    CHANNEL ||--o{ CONTENT_STRATEGY : "versioned history"
+    CONTENT_STRATEGY ||--o{ CONTENT_PILLAR : has
+    CONTENT_STRATEGY ||--o{ STRATEGY_RULE : has
 
     ORGANIZATION {
         uuid id PK
@@ -227,6 +232,82 @@ erDiagram
         enum source
         timestamptz created_at
     }
+
+    CHANNEL_DNA_VERSION {
+        uuid id PK
+        uuid organization_id FK
+        uuid channel_id FK "UK with version; UK-partial with status=active"
+        int version "UK with channel_id"
+        enum status "so uma ACTIVE por canal"
+        jsonb classification_json
+        jsonb audience_json
+        jsonb formats_json
+        jsonb content_patterns_json
+        jsonb performance_patterns_json
+        jsonb brand_rules_json
+        jsonb publishing_patterns_json
+        jsonb restrictions_json
+        jsonb recommendations_json "vazio ate a Fase 08 (Strategy Agent)"
+        float confidence
+        uuid generated_by_agent_run_id "sem FK - agent_runs so existe na Fase 11"
+        timestamptz created_at
+        timestamptz activated_at
+    }
+
+    BRAND_PROFILE {
+        uuid id PK
+        uuid organization_id FK
+        uuid channel_id FK "UK - uma linha por canal"
+        string name
+        jsonb colors_json
+        jsonb typography_json
+        jsonb visual_style_json
+        jsonb tone_of_voice_json
+        jsonb rules_json
+        jsonb prohibited_elements_json
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    CONTENT_STRATEGY {
+        uuid id PK
+        uuid organization_id FK
+        uuid channel_id FK "UK with version; UK-partial with status=active"
+        string name
+        int version "UK with channel_id"
+        enum status "so uma ACTIVE por canal; draft->active exige aprovacao"
+        string objective
+        float shorts_ratio
+        float long_form_ratio
+        float experimental_ratio
+        jsonb recommended_frequency_json
+        jsonb strategy_json "format_strategy, recommendations, risks, confidence"
+        uuid generated_by_agent_run_id "sem FK - agent_runs so existe na Fase 11"
+        timestamptz created_at
+        timestamptz activated_at
+    }
+
+    CONTENT_PILLAR {
+        uuid id PK
+        uuid organization_id FK
+        uuid channel_id FK
+        uuid strategy_id FK
+        string name
+        text description
+        float target_ratio
+        int priority
+        boolean active
+    }
+
+    STRATEGY_RULE {
+        uuid id PK
+        uuid organization_id FK
+        uuid strategy_id FK
+        string rule_type
+        jsonb rule_json
+        int priority
+        boolean active
+    }
 ```
 
 `FEATURE_FLAG` fica fora do diagrama de relacionamentos porque `scope_id` é polimórfico (aponta para `organizations.id` ou `channels.id` dependendo de `scope_type`, ou é nulo quando `scope_type=global`) — não tem FK fixa de propósito (Documento 03, seção 85).
@@ -243,7 +324,9 @@ erDiagram
 | 04 | `channel_connections`, `channel_sync_runs` | ✅ |
 | 05 | `source_videos`, `source_playlists`, `source_video_metrics` | ✅ |
 | 06 | `channel_profiles`, `audience_profiles` | ✅ |
-| 07+ | `channel_dna_versions`, `brand_profiles`, ... | ⏳ |
+| 07 | `channel_dna_versions`, `brand_profiles` | ✅ |
+| 08 | `content_strategies`, `content_pillars`, `strategy_rules` | ✅ |
+| 09+ | `content_ideas`, `content_opportunities`, `opportunity_scores`, `content_clusters`, `idea_relationships`, ... | ⏳ |
 
 Ver Documento 03, seções 110-129 para o mapeamento completo fase → entidades. `sessions` não está no Documento 03 (que deixa "sessions/tokens conforme implementação" em aberto — Documento 10 §112) — modelada aqui seguindo os campos exatos do Documento 09 §6 (`session_id`, `user_id`, `created_at`, `expires_at`, `last_seen_at`, `revoked_at`).
 
@@ -293,3 +376,22 @@ Ver Documento 03, seções 110-129 para o mapeamento completo fase → entidades
 - **AgentRuntime mínimo** (`app/agents/runtime.py`): só carrega o prompt versionado do arquivo (`agents/prompts/<agent_id>/v<N>.md`, Documento 02 §29/Documento 05 §51) e chama `LLMGateway.generate_structured`. Sem `agent_runs`/registry em banco — isso é a "arquitetura completa" que o Documento 10 explicitamente reserva para a Fase 11.
 - **Segunda task Celery do projeto** (`app/tasks/channel_intelligence.py`, nome lógico `channel.intelligence`). O retry de visibilidade do Job (`_mark_running_with_retry`, bug real da Fase 05) foi extraído para `app/tasks/_job_utils.py` e reusado aqui — a mesma race entre commit da API e pickup do worker se aplica a qualquer task disparada por esse padrão.
 - **Análise dispara automaticamente só no sync `INITIAL`** (conexão do canal), não em re-syncs `INCREMENTAL`/`MANUAL`/`FULL` — seguindo a cadeia de eventos do Documento 04 §4 (`channel.connection.created → channel.sync.completed → channel.analysis.completed`) e a tela de onboarding do Documento 06 ("Analisando canal... → Diagnóstico encontrado"). Re-analisar sob demanda é uma ação manual (`POST /channels/{id}/analyze`) — evita custo de LLM em toda sincronização incremental, sem depender do Budget/Cost Controller (que ainda não existe, chega em fases futuras).
+
+## Decisões de modelagem (Fase 07)
+
+- **`channel_dna_versions` re-executa Channel Analyst + Audience Analyst** (não reaproveita `channel_profiles`/`audience_profiles` da Fase 06) — esses dois só guardam um resumo leve, sem os campos ricos (`content_patterns`, `format_patterns`, `publishing_patterns`, `anomalies`) que o DNA precisa. Cada geração de DNA é sua própria rodada de análise, versionada e imutável.
+- **`recommendations_json` fica vazio (`{}`) de propósito** — nenhum agente desta fase produz recomendações de estratégia; isso é explicitamente o Strategy Agent da Fase 08 (Documento 10 §14). Preencher agora com dado inventado violaria a regra de "sem placeholders enganosos" do `CLAUDE.md`.
+- **Apenas uma versão `active` por canal**, garantido por índice único parcial (`WHERE status = 'active'`) em `channel_dna_versions.channel_id` — mesmo padrão do índice parcial já usado em `channels.external_channel_id` (Fase 02). Ao gerar uma nova versão, a anterior é rebaixada para `superseded` **num flush separado antes** de inserir a nova como `active`: como as duas linhas competem pelo mesmo índice, a ordem de flush do SQLAlchemy não garante UPDATE-antes-de-INSERT por padrão, e sem esse cuidado a inserção poderia violar a constraint.
+- **`generated_by_agent_run_id` não é uma FK de verdade** — `agent_runs` só existe na Fase 11. Guarda o `correlation_id` da task Celery que gerou a versão (já rastreável via logs/`audit_logs` hoje) para poder virar FK real no futuro sem precisar de backfill.
+- **`brand_profiles` é CRUD simples do usuário, não inferido por agente** — diferente de Channel/Audience Profile. Uma linha por canal (upsert), sem versionamento. Usado como insumo (`rules_json`/`prohibited_elements_json`) ao gerar o DNA (`brand_rules_json`/`restrictions_json`), mas nunca gerado por LLM.
+- **DNA dispara automaticamente só na primeira análise do canal** (gate: `channel_dna_versions` ainda não existe para aquele canal) — completando a cadeia do Documento 04 §4 (`... → channel.analysis.completed → channel.dna.activated`) só no onboarding, igual à decisão equivalente da Fase 06 para não recalcular a cada sync incremental. Regeneração posterior é manual (`POST /channels/{id}/dna/generate`).
+- **Terceira task Celery do projeto** (`app/tasks/channel_dna.py`, nome lógico `channel.dna`), reusando o mesmo `mark_running_with_retry` compartilhado (`app/tasks/_job_utils.py`) contra a race de visibilidade do Job.
+
+## Decisões de modelagem (Fase 08)
+
+- **`content_strategies` NUNCA ativa sozinha** — diferente de `channel_dna_versions` (Fase 07), a transição `draft → active` exige uma ação humana explícita (`POST /strategy/{id}/approve`), conforme Documento 05 §8 ("Strategy Agent não pode ativar estratégia sozinho sem policy") e Documento 04 §24 ("estratégia não deve mudar silenciosamente"). Por isso `generate_new_version` nunca é auto-disparado por nenhuma outra fase — diferente da cadeia automática `sync → intelligence → dna`, gerar uma estratégia é sempre manual.
+- **Mesmo índice único parcial "uma ACTIVE por canal"** (`WHERE status = 'active'`) e o mesmo cuidado de flush separado antes do INSERT (ver decisão equivalente da Fase 07) — reaplicados aqui porque `approve()` faz exatamente a mesma dança de rebaixar a anterior e promover a nova.
+- **`content_strategies.confidence` não existe como coluna** — o Documento 03 §19 não lista esse campo (diferente de Channel Profile/DNA, que têm). Guardado dentro de `strategy_json` junto com `format_strategy`/`recommendations`/`risks`, em vez de inventar uma coluna fora da spec.
+- **`strategy_rules` não é gerado por agente** — o contrato de output do Strategy Agent (Documento 05 §8) não tem um campo de "regras explícitas", só `recommendations`/`risks`. Modelado como entidade CRUD simples do usuário, mesmo espírito de `brand_profiles`.
+- **`content_pillars` é criado junto com cada versão de estratégia** (FK `strategy_id`), não editado isoladamente depois — o agente propõe os pilares como parte do pacote da versão; mudar pilares significa gerar uma nova versão de estratégia.
+- **Quarta task Celery do projeto** (`app/tasks/channel_strategy.py`, nome lógico `channel.strategy`), reusando `mark_running_with_retry`. `approve()` em si roda síncrono (sem LLM, transição de estado rápida) — só a geração de uma nova versão passa por Celery.

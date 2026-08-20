@@ -103,6 +103,31 @@ async def test_analyze_unknown_channel_raises(db_session):
 
 
 @pytest.mark.anyio
+async def test_analyze_channel_dispatches_dna_generation_only_when_no_dna_exists_yet(db_session):
+    """Dispatch is gated on "no DNA version exists for this channel yet",
+    not on which sync triggered the analysis - simulate the (mocked)
+    first dispatch actually completing (as the real Celery task would)
+    before re-analyzing, since re-dispatching purely because analysis ran
+    again would spam LLM calls on every re-sync."""
+    from app.services.channel_dna import ChannelDNAService
+    from app.tasks import channel_dna as channel_dna_tasks
+
+    org, user = _org_and_user(db_session)
+    channel = await _connect_and_sync_channel(db_session, org, user)
+    service = _intelligence_service(db_session)
+
+    await service.analyze_channel(channel_id=channel.id, organization_id=org.id)
+    assert channel_dna_tasks.run_channel_dna_task.delay.call_count == 1
+
+    await ChannelDNAService(db_session, llm_gateway=FakeLLMGateway()).generate_new_version(
+        channel_id=channel.id, organization_id=org.id
+    )
+
+    await service.analyze_channel(channel_id=channel.id, organization_id=org.id)
+    assert channel_dna_tasks.run_channel_dna_task.delay.call_count == 1
+
+
+@pytest.mark.anyio
 async def test_fake_llm_gateway_raises_for_unknown_prompt():
     with pytest.raises(LLMGenerationError):
         await FakeLLMGateway().generate_structured(

@@ -17,11 +17,13 @@ from app.models.channel_profile import ChannelProfile
 from app.models.enums import AudienceProfileSource, AuditActorType
 from app.repositories.audience_profile import AudienceProfileRepository
 from app.repositories.channel import ChannelRepository
+from app.repositories.channel_dna_version import ChannelDNAVersionRepository
 from app.repositories.channel_profile import ChannelProfileRepository
 from app.repositories.source_playlist import SourcePlaylistRepository
 from app.repositories.source_video import SourceVideoRepository
 from app.repositories.source_video_metric import SourceVideoMetricRepository
 from app.services.audit import AuditService
+from app.tasks.channel_dna import dispatch_channel_dna
 
 
 @dataclass
@@ -48,6 +50,7 @@ class ChannelIntelligenceService:
         self.metrics = SourceVideoMetricRepository(session)
         self.channel_profiles = ChannelProfileRepository(session)
         self.audience_profiles = AudienceProfileRepository(session)
+        self.dna_versions = ChannelDNAVersionRepository(session)
         self.audit = AuditService(session)
 
     async def analyze_channel(
@@ -122,6 +125,20 @@ class ChannelIntelligenceService:
                 "audience_evidence": audience_analysis.evidence,
             },
         )
+
+        # Documento 04 event chain: channel.connection.created ->
+        # channel.sync.completed -> channel.analysis.completed ->
+        # channel.dna.activated. Only auto-generate DNA once per channel
+        # (first analysis ever) - Documento 04 sec. 20 explicitly warns
+        # against recalculating Channel DNA on every small change; later
+        # regeneration is a deliberate, manual action instead.
+        if (
+            self.dna_versions.get_latest_version_number(channel_id, organization_id=organization_id)
+            == 0
+        ):
+            dispatch_channel_dna(
+                self.session, channel_id=channel_id, organization_id=organization_id
+            )
 
         return ChannelIntelligenceResult(
             channel_profile=channel_profile,
