@@ -127,6 +127,18 @@ class FakeLLMGateway(LLMGateway):
     async def generate_structured(
         self, *, prompt_id: str, system_prompt: str, user_prompt: str, response_model: type[T]
     ) -> T:
+        if prompt_id == "opportunity_evaluator.v1":
+            # Content-sensitive on purpose (unlike every other canned
+            # response here): the "system rejects an irrelevant trend"
+            # acceptance criterion (Documento 10 Fase 09) needs at least one
+            # idea to score low and one to score high, deterministically,
+            # without a real LLM.
+            is_trend_chasing = _FAKE_TREND_CHASING_IDEA_TITLE in user_prompt
+            evaluator_canned = (
+                _FAKE_OPPORTUNITY_SCORES_POOR if is_trend_chasing else _FAKE_OPPORTUNITY_SCORES_GOOD
+            )
+            return response_model.model_validate(evaluator_canned)
+
         canned = _CANNED_RESPONSES.get(prompt_id)
         if canned is None:
             raise LLMGenerationError(
@@ -202,7 +214,82 @@ _CANNED_RESPONSES: dict[str, dict[str, Any]] = {
         "risks": ["Amostra de apenas 5 videos - confianca limitada ate mais dados"],
         "confidence": 0.58,
     },
+    "idea_agent.v1": {
+        "ideas": [
+            {
+                "title": "Como funciona a bateria de um smartphone por dentro",
+                "summary": "Desmontagem explicativa mostrando as celulas e o circuito de protecao.",
+                "recommended_format": "long_form",
+                "content_pillar": "Reviews em profundidade",
+                "hook_concept": "Abrir o aparelho nos primeiros 5 segundos, sem narracao.",
+                "reason": "Alinhado ao pilar de reviews e ao formato long_form dominante do canal.",
+                "source_type": "ai",
+                "novelty": 0.5,
+                "confidence": 0.7,
+            },
+            {
+                "title": "5 erros que todo iniciante comete comprando fone bluetooth",
+                "summary": "Lista rapida de erros de compra com recomendacoes praticas.",
+                "recommended_format": "short",
+                "content_pillar": "Bastidores/Shorts",
+                "hook_concept": "Comecar pelo erro mais caro, direto.",
+                "reason": "Formato curto alinhado ao mix de shorts da estrategia ativa.",
+                "source_type": "ai",
+                "novelty": 0.4,
+                "confidence": 0.65,
+            },
+            {
+                "title": "Dança viral do TikTok reagindo com produtos de tecnologia",
+                "summary": "Reagir a uma dança viral segurando produtos de tecnologia.",
+                "recommended_format": "short",
+                "content_pillar": "",
+                "hook_concept": "Entrar direto na dança viral.",
+                "reason": "Tendencia em alta, mas fora do nicho de reviews/comparativos do canal.",
+                "source_type": "trend",
+                "novelty": 0.9,
+                "confidence": 0.3,
+            },
+        ]
+    },
 }
+
+# The (deterministic) score set the fake Opportunity Evaluator returns for
+# most ideas - channel_fit/audience_fit/brand_fit/strategic_fit all strong.
+_FAKE_OPPORTUNITY_SCORES_GOOD: dict[str, Any] = {
+    "channel_fit": 85.0,
+    "audience_fit": 80.0,
+    "trend": 55.0,
+    "novelty": 45.0,
+    "retention_potential": 75.0,
+    "search_potential": 60.0,
+    "competition": 65.0,
+    "brand_fit": 90.0,
+    "strategic_fit": 80.0,
+    "confidence": 0.68,
+    "reasoning_summary": "Alinhado ao DNA e a estrategia ativa do canal.",
+}
+
+# Reserved for the off-niche "trend-chasing" idea (see idea_agent.v1 above) -
+# high on trend, weak everywhere else that matters for THIS channel. Exists
+# specifically so the "system rejects an irrelevant trend" acceptance
+# criterion (Documento 10 Fase 09) is exercisable deterministically without
+# a real LLM: FakeLLMGateway.generate_structured below picks this set when
+# the evaluated idea's title matches the trend-chasing canned idea.
+_FAKE_OPPORTUNITY_SCORES_POOR: dict[str, Any] = {
+    "channel_fit": 20.0,
+    "audience_fit": 25.0,
+    "trend": 70.0,
+    "novelty": 85.0,
+    "retention_potential": 30.0,
+    "search_potential": 40.0,
+    "competition": 35.0,
+    "brand_fit": 30.0,
+    "strategic_fit": 15.0,
+    "confidence": 0.55,
+    "reasoning_summary": "Tendencia em alta, mas fora do nicho e da estrategia do canal.",
+}
+
+_FAKE_TREND_CHASING_IDEA_TITLE = "Dança viral do TikTok reagindo com produtos de tecnologia"
 
 
 def get_llm_gateway(settings: Settings) -> LLMGateway:

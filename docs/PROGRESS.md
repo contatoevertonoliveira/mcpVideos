@@ -8,9 +8,9 @@
 
 ## 1. Status Geral
 
-**Fase atual:** ✅ **Fase 08 — Strategy Engine implementada, validada e commitada** (`6f37fe6`, junto com a Fase 07). Ver seção 4.8 para o relatório completo. Em seguida, o usuário pediu a leitura do **Documento 08A** (Direção Visual, Design System e Linguagem Futurista) e um retrofit da fundação visual antes da Fase 09 — ver seção 4.9. Fases 01-08 100% validadas e commitadas (seções 4.1-4.8).
+**Fase atual:** ✅ **Fase 09 — Ideas & Opportunity Engine implementada e validada nesta sessão, ainda não commitada.** Ver seção 4.10 para o relatório completo. O retrofit da fundação visual (Documento 08A, seção 4.9) foi commitado (`d402cdb`) antes de iniciar a Fase 09. Fases 01-08 + retrofit visual 100% validados e commitados (seções 4.1-4.9).
 
-**Próximo passo:** commitar o retrofit visual (aguardando confirmação do usuário) e depois iniciar a **Fase 09 — Ideas & Opportunity Engine**, já com a fundação visual em vigor.
+**Próximo passo:** commitar/enviar a Fase 09 (aguardando confirmação do usuário) e depois decidir entre iniciar a **Fase 10 — Content Calendar** ou fazer a passada dedicada de refinamento estético que o usuário sinalizou que viria depois ("depois ainda vamos estruturar melhor essa parte de estética").
 
 ---
 
@@ -420,9 +420,48 @@ docker compose up -d --build
 # /login, /register, /dashboard, /channels (sidebar+topbar), e o botão de tema
 ```
 
+### 4.10 Fase 09 — Relatório de Conclusão
+
+**Implementado:**
+- **5 entidades novas** (Documento 03 §22-26, Documento 10 F09): `content_ideas`, `content_opportunities`, `opportunity_scores`, `content_clusters` (criada mas deliberadamente não conectada a nenhum fluxo de geração ainda — nenhum agente/endpoint a usa, decisão de escopo documentada), `idea_relationships` (`UniqueConstraint(idea_id, related_idea_id, relationship_type)`). Migration `5b0d2177602d`.
+- **2 agentes novos** (Documento 05 §10-11): `idea_agent` (le DNA ativo + Audience Profile + estratégia ativa + vídeos recentes + títulos de ideias já existentes, propõe títulos/formato/pilar/hook/motivo) e `opportunity_evaluator` (recebe uma ideia e propõe **componentes** de score — nunca a nota final: `production_feasibility` do Documento 05 foi descartado por não constar entre os 9 `score_type` autoritativos do Documento 03).
+- **`app/services/opportunity_scoring.py`**: cálculo do score final é 100% em código, não no LLM (Documento 10 F09: "Cálculo final deve ocorrer em código") — `SCORE_WEIGHTS` (9 pesos somando exatamente 1.0, checado no import do módulo) e `score_opportunity()` puro/testável, com `RECOMMEND_THRESHOLD = 60.0`.
+- **`IdeaGenerationService`**: roda o Idea Agent, aplica deduplicação (heurística Jaccard de overlap de tokens do título, limiar 0.6) — uma ideia quase-duplicada **nunca é descartada silenciosamente**: é persistida como `ContentIdea(status=ARCHIVED)` e ligada à original via `IdeaRelationship(relationship_type=RELATED)`.
+- **`OpportunityEvaluationService`**: roda o Opportunity Evaluator por ideia, aplica `score_opportunity()`, persiste `ContentOpportunity` + os 9 `OpportunityScore` (um por componente), e atualiza `ContentIdea.status` para `RECOMMENDED`/`REJECTED` conforme o resultado calculado em código.
+- **`ContentIdeaService.approve()`**: única transição para `APPROVED` (Documento 08A §35, conceito "Opportunity Card" com botão "[Adicionar]") — só aceita ideias `DRAFT`/`RECOMMENDED`.
+- **5ª e 6ª tasks Celery do projeto** (`app/tasks/idea_generation.py`, `app/tasks/opportunity_evaluation.py`): gerar ideias faz fan-out automático — uma `idea.generation` bem-sucedida dispara uma `opportunity.evaluation` por ideia nova criada (nunca para duplicatas arquivadas).
+- **Endpoints novos**: `POST /{channel_id}/ideas/generate`, `GET /{channel_id}/ideas` (ordenado por `opportunity_score` desc, junta o resultado mais recente de `ContentOpportunity`), `POST /{channel_id}/ideas/{idea_id}/approve`.
+- **Frontend**: bloco "Ideias de conteúdo" na página `/channels` — cards com título, badge de status (Recomendada/Rejeitada/Aprovada/etc.), score, formato, resumo, motivo (`reasoning_summary`), e botão "Adicionar" (só aparece para ideias `recommended`), atendendo ao critério de aceite literal do Documento 10 F09 (tela com score/título/resumo/formato/motivo). Botão "Gerar ideias" adicionado junto aos demais.
+- **Não implementado** (fora de escopo por definição): `content_clusters` sem uso ainda (Documento 07 não detalha o fluxo de clusterização o suficiente para esta fase, e nenhum critério de aceite do Documento 10 F09 exige clusters visíveis); tela dedicada `/ideas` (Documento 08A §27 lista "Ideias" como item de navegação top-level, mas sem um seletor de canal multi-canal construído ainda, o bloco inline na página do canal — mesmo padrão de Diagnóstico/DNA/Estratégia — foi a escolha consistente com o restante do app); Trend Researcher/Learned Rules como inputs do Idea Agent (dependem de fases futuras, Documento 05 já previa essa lacuna).
+
+**Bug de lógica encontrado e corrigido durante o desenvolvimento (antes de rodar qualquer teste):** a primeira versão do branch de deduplicação em `idea_generation.py` tentava criar um `IdeaRelationship` ligando uma ideia existente a ela mesma, sem nunca persistir a nova sugestão como uma `ContentIdea` de fato — o que deixaria o relacionamento sem uma ponta real. Corrigido: toda sugestão do agente vira uma `ContentIdea` (arquivada imediatamente se for duplicata), e o relacionamento liga a nova para a original.
+
+**Validado nesta sessão:**
+- 157 testes de backend (pytest) contra Postgres+Redis reais: `test_opportunity_scoring.py` (pesos somam 1.0, cálculo determinístico), `test_idea_generation_service.py` (gera ideias, deduplicação arquiva e liga via `IdeaRelationship`, sem DNA/estratégia ativa rejeitado), `test_opportunity_evaluation_service.py` (score final bate com o cálculo manual, idea vira RECOMMENDED/REJECTED conforme o threshold), `test_content_idea_service.py` (`approve()` só aceita DRAFT/RECOMMENDED, canal errado rejeitado), endpoints HTTP estendidos em `test_channels_endpoints.py`. `ruff`/`mypy` limpos.
+- Migration validada com ciclo `upgrade → downgrade → upgrade` no banco de dev e aplicada ao banco de teste.
+- **Fluxo completo validado via `curl` contra a stack Docker real**, incluindo o critério de aceite literal do Documento 10 F09 ("sistema gera ideias coerentes com o canal e consegue rejeitar tendência irrelevante"): canal novo conectado → cadeia automática `sync→intelligence→dna` → estratégia gerada e aprovada → `POST /ideas/generate` → worker processou `idea.generation` e disparou 3× `opportunity.evaluation` em fan-out → `GET /ideas` retornou exatamente o esperado, batendo com o cálculo manual: duas ideias com `opportunity_score: 72.85` (`recommended`) e a ideia "tendência de dança viral" (fora do nicho) com `opportunity_score: 35.25` (`rejected`), corretamente ordenadas por score.
+- **Investigação de encoding**: o título "Dança viral..." aparecia corrompido (`"DanÃ§a"`) quando inspecionado via `curl | python -m json.tool` neste shell Windows. Confirmado duas vezes, de forma independente, que é um artefato do `python -m json.tool`/terminal (decodifica stdin com um encoding diferente de UTF-8 nesta configuração de shell) e não um bug real: os bytes brutos da resposta HTTP contêm a codificação UTF-8 correta (`b'Dan\xc3\xa7a'`), confirmado lendo os bytes crus com `python3` diretamente e via `repr()` do JSON já parseado — nos dois casos o caractere "ç" aparece correto.
+- **Frontend**: `eslint`, `tsc --noEmit`, `next build` — todos limpos. **Validado no navegador real com cliques físicos que registraram com sucesso desta vez** (diferente das Fases 07/08, onde a ferramenta de automação não conseguiu registrar cliques): "Gerar DNA" → "Gerar estratégia" → "Aprovar estratégia" → "Gerar ideias" → os 3 cards de ideias apareceram corretamente (título, badge de status, score, formato, resumo, motivo) → "Adicionar" na primeira ideia recomendada → status mudou para "Aprovada" e o botão "Adicionar" desapareceu, confirmando o ciclo completo Server Action → API → Celery → Postgres → nova renderização. (Notado en passant: o servidor de dev do `web` em Docker no Windows não pegou a mudança de arquivo via hot-reload/Turbopack até um `docker compose restart web` manual — bind mount funcionando, mas o watcher de arquivo do Next não disparou sozinho; não é um bug da aplicação, é uma característica conhecida de bind mounts no Docker Desktop for Windows.)
+
+**Pendências / Known Limitations:**
+- `content_clusters` existe no schema mas sem nenhum fluxo que a popule ainda.
+- Tela dedicada "Ideias" (nav top-level do Documento 08A) não construída — bloco inline na página do canal, mesmo padrão das fases anteriores.
+- `docs/database.md` atualizado com `content_ideas`/`content_opportunities`/`opportunity_scores`/`content_clusters`/`idea_relationships` no ERD e as decisões desta fase.
+
+**Como validar:**
+```bash
+cd apps/api && pytest -v
+cd apps/web && npm run lint && npm run typecheck && npm run build
+docker compose up -d --build
+bash infra/scripts/smoke-test.sh
+# depois, testar manualmente: com um canal que já tem DNA e estratégia ativa em
+# http://localhost:3000/channels, clicar em "Gerar ideias" e aguardar os cards
+# aparecerem; clicar em "Adicionar" numa ideia recomendada
+```
+
 ## 5. Pendências / Perguntas em Aberto
 
-- Fases 01-08 commitadas e enviadas para `main` (`b3041ae`, `ed9b437`, `7b54b9c`, `4e5ecdc`, `7675039`, `ecf72cd`, `b518bf6`, `6f37fe6`). **Retrofit da fundação visual (Documento 08A) implementado e validado nesta sessão, ainda não commitado** — aguardando confirmação do usuário.
+- Fases 01-08 + retrofit visual commitados e enviados para `main` (`b3041ae`, `ed9b437`, `7b54b9c`, `4e5ecdc`, `7675039`, `ecf72cd`, `b518bf6`, `6f37fe6`, `d402cdb`). **Fase 09 — Ideas & Opportunity Engine implementada e validada nesta sessão, ainda não commitada** — aguardando confirmação do usuário.
 - Documento 10 (seção 137) sugere organizar os documentos em `/docs/master/` com slugs (`01-product-brief.md`, etc.) — não feito; usuário optou implicitamente por manter o padrão atual `Documento NN - Titulo.md` ao pedir para seguir direto para a Fase 01.
 - Ainda não definido: nome comercial do produto, provedor de IA/mídia real a integrar primeiro na Fase 13 (Documento 10 §71 pede benchmark atualizado antes de decidir — não assumir Higgsfield/Kie/fal.ai/WaveSpeed/Replicate como escolha final), moeda/plano de billing.
 - Credenciais reais do Google Cloud (`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`) ainda não configuradas — usuário optou por seguir só com `FakeYouTubeGateway` por enquanto (Fase 04). `GoogleYouTubeGateway` está implementada e pronta (incluindo os métodos de import da Fase 05), mas nunca exercitada contra o Google real.
@@ -526,7 +565,15 @@ docker compose up -d --build
 - Perguntado ao usuário como sequenciar em relação à Fase 09; escolheu fazer o retrofit completo agora.
 - Recalibrados os tokens de design em `globals.css` (paletas dark/light do Documento 08A, tokens novos de surface/status/shadow/motion/z-index), app passou a renderizar dark por padrão sem flash, criado `AppShell` (sidebar+topbar) via um novo route group `(app)/` (dashboard e channels movidos para dentro, preservando histórico via `git mv`), `Button`/`Badge` retocados, páginas `/`, `/login`, `/register`, `/dashboard`, `/channels` reestilizadas com os tokens (sem cor hardcoded). Documentação nova: `docs/design-system.md` e `docs/ui.md`.
 - `eslint`/`tsc`/`vitest`/`next build` limpos. Validado no navegador real via `getComputedStyle`/CSS custom properties (dark ativo por padrão, troca para light calibrada corretamente) — clique físico do toggle não registrou nesta sessão (mesma instabilidade da ferramenta já vista nas Fases 07/08), navegação sem regressão confirmada via leitura de página.
-- Próximo passo: usuário decide se commita/envia o retrofit agora, depois seguimos para a Fase 09 — Ideas & Opportunity Engine.
+- Usuário confirmou que este retrofit é uma primeira passada/baseline, não o polimento estético final ("depois ainda vamos estruturar melhor essa parte de estética, vamos commitar e avançar") — pediu para commitar e seguir para a Fase 09 na mesma mensagem. Commit `d402cdb` ("feat(ui): retrofit visual design system per Documento 08A") criado e enviado para `main`.
+
+### 2026-08-20 — Fase 09 — Ideas & Opportunity Engine (mesma data, sessão seguinte)
+- Implementadas as 5 entidades (`content_ideas`, `content_opportunities`, `opportunity_scores`, `content_clusters` sem uso ainda, `idea_relationships`), os agentes `idea_agent`/`opportunity_evaluator`, `app/services/opportunity_scoring.py` (cálculo do score final 100% em código, nunca confiando na opinião do LLM), `IdeaGenerationService` (com deduplicação Jaccard que arquiva+linka em vez de descartar), `OpportunityEvaluationService`, `ContentIdeaService.approve()`, e a 5ª/6ª tasks Celery do projeto (`idea.generation` com fan-out automático para `opportunity.evaluation` por ideia nova).
+- Endpoints `POST /{id}/ideas/generate`, `GET /{id}/ideas` (ordenado por score), `POST /{id}/ideas/{idea_id}/approve`. Frontend ganhou o bloco "Ideias de conteúdo" (cards com score/título/resumo/formato/motivo/status, botão "Adicionar" só em ideias recomendadas) e botão "Gerar ideias".
+- 157 testes de backend passando; `ruff`/`mypy`/`eslint`/`tsc`/`next build` limpos. Fluxo completo validado via `curl` contra a stack Docker real, incluindo o critério de aceite literal ("rejeita tendência irrelevante") — números batendo exatamente com o cálculo manual (72.85 recomendada ×2, 35.25 rejeitada).
+- Investigado um título aparentemente corrompido (`"DanÃ§a"`) ao inspecionar via `curl | python -m json.tool`; confirmado duas vezes que é artefato do shell/`json.tool` neste ambiente Windows, não um bug real — os bytes HTTP crus e o JSON re-parseado mostram "ç" correto.
+- **Diferente das Fases 07/08, os cliques físicos no navegador registraram com sucesso desta vez**: fluxo "Gerar DNA" → "Gerar estratégia" → "Aprovar estratégia" → "Gerar ideias" → "Adicionar" testado de ponta a ponta clicando de verdade na UI (não só via `curl`). Detalhe operacional: o dev server do `web` em Docker precisou de um `docker compose restart web` manual para pegar os arquivos novos — o hot-reload do Turbopack não disparou sozinho sobre o bind mount no Docker Desktop for Windows.
+- Próximo passo: usuário decide se commita/envia a Fase 09 agora, e depois se seguimos para a Fase 10 — Content Calendar ou fazemos a passada de refinamento estético já sinalizada.
 
 ---
 

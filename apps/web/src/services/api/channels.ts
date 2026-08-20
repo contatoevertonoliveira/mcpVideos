@@ -6,6 +6,7 @@ import type {
   ChannelIntelligence,
   ChannelStrategyStatus,
   ChannelSummary,
+  ContentIdeaSummary,
   SourceVideoSummary,
 } from "@/types/channel";
 
@@ -164,6 +165,41 @@ export async function approveChannelStrategy(
   strategyId: string,
 ): Promise<void> {
   await fetch(`${getApiInternalUrl()}/api/v1/channels/${channelId}/strategy/${strategyId}/approve`, {
+    method: "POST",
+    headers: authHeaders(token),
+    cache: "no-store",
+  }).catch(() => undefined);
+}
+
+export async function triggerIdeaGeneration(token: string, channelId: string): Promise<void> {
+  await fetch(`${getApiInternalUrl()}/api/v1/channels/${channelId}/ideas/generate`, {
+    method: "POST",
+    headers: authHeaders(token),
+    cache: "no-store",
+  }).catch(() => undefined);
+}
+
+export async function listChannelIdeas(
+  token: string,
+  channelId: string,
+): Promise<ContentIdeaSummary[]> {
+  const response = await fetch(`${getApiInternalUrl()}/api/v1/channels/${channelId}/ideas`, {
+    headers: authHeaders(token),
+    cache: "no-store",
+  }).catch(() => null);
+
+  if (!response || !response.ok) {
+    return [];
+  }
+  return (await response.json()) as ContentIdeaSummary[];
+}
+
+export async function approveChannelIdea(
+  token: string,
+  channelId: string,
+  ideaId: string,
+): Promise<void> {
+  await fetch(`${getApiInternalUrl()}/api/v1/channels/${channelId}/ideas/${ideaId}/approve`, {
     method: "POST",
     headers: authHeaders(token),
     cache: "no-store",

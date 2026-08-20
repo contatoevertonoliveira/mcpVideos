@@ -14,6 +14,8 @@ from app.tasks import channel_dna as channel_dna_tasks
 from app.tasks import channel_intelligence as channel_intelligence_tasks
 from app.tasks import channel_strategy as channel_strategy_tasks
 from app.tasks import channel_sync as channel_sync_tasks
+from app.tasks import idea_generation as idea_generation_tasks
+from app.tasks import opportunity_evaluation as opportunity_evaluation_tasks
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
@@ -41,6 +43,10 @@ def no_celery_dispatch(monkeypatch):
     )
     monkeypatch.setattr(channel_dna_tasks.run_channel_dna_task, "delay", MagicMock())
     monkeypatch.setattr(channel_strategy_tasks.run_channel_strategy_task, "delay", MagicMock())
+    monkeypatch.setattr(
+        opportunity_evaluation_tasks.run_opportunity_evaluation_task, "delay", MagicMock()
+    )
+    monkeypatch.setattr(idea_generation_tasks.run_idea_generation_task, "delay", MagicMock())
 
 
 @pytest.fixture(scope="session")

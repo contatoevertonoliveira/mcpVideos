@@ -149,3 +149,69 @@ class ContentStrategyStatus(StrEnum):
     DRAFT = "draft"
     ACTIVE = "active"
     ARCHIVED = "archived"
+
+
+class IdeaOrigin(StrEnum):
+    """Documento 03, secao 22."""
+
+    AI = "ai"
+    TREND = "trend"
+    USER = "user"
+    ANALYTICS = "analytics"
+    SERIES = "series"
+    REPURPOSE = "repurpose"
+
+
+class IdeaStatus(StrEnum):
+    """Documento 03, secao 22. RECOMMENDED/REJECTED sao definidos pelo
+    OpportunityEvaluationService a partir do score calculado em codigo
+    (Documento 10 F09: "calculo final deve ocorrer em codigo") - nunca
+    pela opiniao livre do agente. APPROVED e sempre uma acao humana."""
+
+    DRAFT = "draft"
+    EVALUATING = "evaluating"
+    RECOMMENDED = "recommended"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    ARCHIVED = "archived"
+
+
+class OpportunityStatus(StrEnum):
+    """Documento 03, secao 23. Espelha o resultado do calculo de score."""
+
+    RECOMMENDED = "recommended"
+    REJECTED = "rejected"
+
+
+class ScoreType(StrEnum):
+    """Documento 03, secao 24 ("tipos iniciais") - os 9 componentes que
+    compoem o opportunity_score. Nunca guardar so o score final; cada
+    componente vira sua propria linha em opportunity_scores."""
+
+    CHANNEL_FIT = "channel_fit"
+    AUDIENCE_FIT = "audience_fit"
+    TREND = "trend"
+    NOVELTY = "novelty"
+    RETENTION_POTENTIAL = "retention_potential"
+    SEARCH_POTENTIAL = "search_potential"
+    COMPETITION = "competition"
+    BRAND_FIT = "brand_fit"
+    STRATEGIC_FIT = "strategic_fit"
+
+
+class ContentClusterStatus(StrEnum):
+    """Documento 03, secao 25."""
+
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+class IdeaRelationshipType(StrEnum):
+    """Documento 03, secao 26."""
+
+    PARENT = "parent"
+    CHILD = "child"
+    RELATED = "related"
+    REPURPOSE = "repurpose"
+    SEQUEL = "sequel"
+    SERIES = "series"

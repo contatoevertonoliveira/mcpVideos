@@ -58,3 +58,41 @@ class StrategyAgentOutput(BaseModel):
     recommendations: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
     confidence: float
+
+
+class IdeaSuggestion(BaseModel):
+    """Documento 05, secao 10."""
+
+    title: str
+    summary: str = ""
+    recommended_format: str = ""
+    content_pillar: str = ""
+    hook_concept: str = ""
+    reason: str = ""
+    source_type: str = "ai"
+    novelty: float = 0.0
+    confidence: float = 0.0
+
+
+class IdeaAgentOutput(BaseModel):
+    ideas: list[IdeaSuggestion] = Field(default_factory=list)
+
+
+class OpportunityEvaluatorOutput(BaseModel):
+    """Documento 05, secao 11. Deliberately does NOT include the agent's
+    own ``final_score``/``recommendation`` fields from the doc's example -
+    Documento 10 Fase 09 requires the final weighted score and the
+    approve/reject outcome to be computed in code from these raw
+    components, never trusted directly from the LLM."""
+
+    channel_fit: float
+    audience_fit: float
+    trend: float
+    novelty: float
+    retention_potential: float
+    search_potential: float
+    competition: float
+    brand_fit: float
+    strategic_fit: float
+    confidence: float
+    reasoning_summary: str = ""

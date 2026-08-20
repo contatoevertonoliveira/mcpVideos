@@ -5,12 +5,14 @@ import { redirect } from "next/navigation";
 
 import { getSessionToken } from "@/lib/session-cookie";
 import {
+  approveChannelIdea,
   approveChannelStrategy,
   disconnectChannel,
   triggerChannelAnalysis,
   triggerChannelDNAGeneration,
   triggerChannelStrategyGeneration,
   triggerChannelSync,
+  triggerIdeaGeneration,
 } from "@/services/api/channels";
 
 export async function disconnectChannelAction(formData: FormData): Promise<void> {
@@ -101,5 +103,36 @@ export async function approveStrategyAction(formData: FormData): Promise<void> {
   }
 
   await approveChannelStrategy(token, channelId, strategyId);
+  revalidatePath("/channels");
+}
+
+export async function triggerIdeaGenerationAction(formData: FormData): Promise<void> {
+  const token = await getSessionToken();
+  if (!token) {
+    redirect("/login");
+  }
+
+  const channelId = String(formData.get("channel_id") ?? "");
+  if (!channelId) {
+    return;
+  }
+
+  await triggerIdeaGeneration(token, channelId);
+  revalidatePath("/channels");
+}
+
+export async function approveIdeaAction(formData: FormData): Promise<void> {
+  const token = await getSessionToken();
+  if (!token) {
+    redirect("/login");
+  }
+
+  const channelId = String(formData.get("channel_id") ?? "");
+  const ideaId = String(formData.get("idea_id") ?? "");
+  if (!channelId || !ideaId) {
+    return;
+  }
+
+  await approveChannelIdea(token, channelId, ideaId);
   revalidatePath("/channels");
 }

@@ -523,3 +523,131 @@ def test_strategy_rules_endpoints(client, db_session):
     )
     assert list_response.status_code == 200
     assert len(list_response.json()) == 1
+
+
+def test_list_ideas_before_generation_is_empty(client, db_session):
+    token = _register_and_get_token(client)
+    channel = _connect_channel(client, token)
+
+    response = client.get(f"/api/v1/channels/{channel['id']}/ideas", headers=_auth_headers(token))
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_trigger_idea_generation_unknown_channel_returns_404(client):
+    token = _register_and_get_token(client)
+
+    response = client.post(
+        f"/api/v1/channels/{uuid.uuid4()}/ideas/generate", headers=_auth_headers(token)
+    )
+
+    assert response.status_code == 404
+
+
+def test_idea_generation_and_evaluation_end_to_end(client, db_session):
+    import asyncio
+
+    from app.gateways.llm import FakeLLMGateway
+    from app.gateways.youtube import FakeYouTubeGateway
+    from app.models.enums import SyncType
+    from app.services.channel_dna import ChannelDNAService
+    from app.services.channel_strategy import ChannelStrategyService
+    from app.services.channel_sync import ChannelSyncService
+    from app.services.idea_generation import IdeaGenerationService
+    from app.services.opportunity_evaluation import OpportunityEvaluationService
+
+    token = _register_and_get_token(client)
+    channel = _connect_channel(client, token)
+    channel_id = uuid.UUID(channel["id"])
+    organization_id = uuid.UUID(channel["organization_id"])
+
+    async def _seed():
+        await ChannelSyncService(db_session, gateway=FakeYouTubeGateway()).run_sync(
+            channel_id=channel_id, organization_id=organization_id, sync_type=SyncType.MANUAL
+        )
+        await ChannelDNAService(db_session, llm_gateway=FakeLLMGateway()).generate_new_version(
+            channel_id=channel_id, organization_id=organization_id
+        )
+        strategy_service = ChannelStrategyService(db_session, llm_gateway=FakeLLMGateway())
+        strategy = await strategy_service.generate_new_version(
+            channel_id=channel_id, organization_id=organization_id
+        )
+        me = client.get("/api/v1/auth/me", headers=_auth_headers(token)).json()
+        strategy_service.approve(
+            channel_id=channel_id,
+            strategy_id=strategy.id,
+            organization_id=organization_id,
+            user_id=uuid.UUID(me["user"]["id"]),
+        )
+        ideas = await IdeaGenerationService(
+            db_session, llm_gateway=FakeLLMGateway()
+        ).generate_ideas(channel_id=channel_id, organization_id=organization_id)
+        for idea in ideas:
+            await OpportunityEvaluationService(
+                db_session, llm_gateway=FakeLLMGateway()
+            ).evaluate_idea(idea_id=idea.id, organization_id=organization_id)
+
+    asyncio.run(_seed())
+
+    response = client.get(f"/api/v1/channels/{channel['id']}/ideas", headers=_auth_headers(token))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 3
+    # Ranked by opportunity_score descending (Documento 10 F09 "ranking").
+    scores = [item["opportunity_score"] for item in body]
+    assert scores == sorted(scores, reverse=True)
+    # The trend-chasing idea (see FakeLLMGateway canned data) must be
+    # rejected - the literal acceptance criterion for this phase.
+    assert any(item["status"] == "rejected" for item in body)
+    assert any(item["status"] == "recommended" for item in body)
+
+
+def test_approve_idea(client, db_session):
+    import asyncio
+
+    from app.gateways.llm import FakeLLMGateway
+    from app.gateways.youtube import FakeYouTubeGateway
+    from app.models.enums import SyncType
+    from app.services.channel_dna import ChannelDNAService
+    from app.services.channel_strategy import ChannelStrategyService
+    from app.services.channel_sync import ChannelSyncService
+    from app.services.idea_generation import IdeaGenerationService
+
+    token = _register_and_get_token(client)
+    channel = _connect_channel(client, token)
+    channel_id = uuid.UUID(channel["id"])
+    organization_id = uuid.UUID(channel["organization_id"])
+    me = client.get("/api/v1/auth/me", headers=_auth_headers(token)).json()
+
+    async def _seed():
+        await ChannelSyncService(db_session, gateway=FakeYouTubeGateway()).run_sync(
+            channel_id=channel_id, organization_id=organization_id, sync_type=SyncType.MANUAL
+        )
+        await ChannelDNAService(db_session, llm_gateway=FakeLLMGateway()).generate_new_version(
+            channel_id=channel_id, organization_id=organization_id
+        )
+        strategy_service = ChannelStrategyService(db_session, llm_gateway=FakeLLMGateway())
+        strategy = await strategy_service.generate_new_version(
+            channel_id=channel_id, organization_id=organization_id
+        )
+        strategy_service.approve(
+            channel_id=channel_id,
+            strategy_id=strategy.id,
+            organization_id=organization_id,
+            user_id=uuid.UUID(me["user"]["id"]),
+        )
+        return await IdeaGenerationService(db_session, llm_gateway=FakeLLMGateway()).generate_ideas(
+            channel_id=channel_id, organization_id=organization_id
+        )
+
+    ideas = asyncio.run(_seed())
+
+    response = client.post(
+        f"/api/v1/channels/{channel['id']}/ideas/{ideas[0].id}/approve",
+        headers=_auth_headers(token),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "approved"

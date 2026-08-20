@@ -18,6 +18,8 @@ from app.repositories.channel import ChannelRepository
 from app.repositories.channel_dna_version import ChannelDNAVersionRepository
 from app.repositories.channel_profile import ChannelProfileRepository
 from app.repositories.channel_sync_run import ChannelSyncRunRepository
+from app.repositories.content_idea import ContentIdeaRepository
+from app.repositories.content_opportunity import ContentOpportunityRepository
 from app.repositories.content_pillar import ContentPillarRepository
 from app.repositories.content_strategy import ContentStrategyRepository
 from app.repositories.source_video import SourceVideoRepository
@@ -31,6 +33,7 @@ from app.schemas.channel_intelligence import (
     ChannelProfileRead,
 )
 from app.schemas.channel_sync_run import ChannelSyncRunRead, TriggerSyncResponse
+from app.schemas.content_idea import ContentIdeaRead
 from app.schemas.content_strategy import (
     ChannelStrategyStatusRead,
     ContentPillarRead,
@@ -43,10 +46,12 @@ from app.schemas.source_video import SourceVideoRead
 from app.services.brand_profile import BrandProfileService
 from app.services.channel_connection import ChannelConnectionService
 from app.services.channel_strategy import ChannelStrategyService
+from app.services.content_idea import ContentIdeaService
 from app.tasks.channel_dna import dispatch_channel_dna
 from app.tasks.channel_intelligence import dispatch_channel_intelligence
 from app.tasks.channel_strategy import dispatch_channel_strategy
 from app.tasks.channel_sync import dispatch_channel_sync
+from app.tasks.idea_generation import dispatch_idea_generation
 
 router = APIRouter(prefix="/channels", tags=["channels"])
 
@@ -344,3 +349,61 @@ def list_strategy_rules(
         strategy_id=strategy_id, organization_id=organization_id
     )
     return [StrategyRuleRead.model_validate(rule) for rule in rules]
+
+
+@router.post("/{channel_id}/ideas/generate", response_model=TriggerSyncResponse)
+def trigger_idea_generation(
+    channel_id: uuid.UUID,
+    organization_id: uuid.UUID = Depends(require_permission(Permission.CHANNEL_MANAGE)),
+    db: DbSession = Depends(get_db),
+) -> TriggerSyncResponse:
+    channel = ChannelRepository(db).get_by_id(channel_id, organization_id=organization_id)
+    if channel is None:
+        raise NotFoundError("Channel not found", code="CHANNEL_NOT_FOUND")
+
+    job = dispatch_idea_generation(db, channel_id=channel_id, organization_id=organization_id)
+    assert job.correlation_id is not None
+    return TriggerSyncResponse(job_id=job.id, correlation_id=job.correlation_id)
+
+
+@router.get("/{channel_id}/ideas", response_model=list[ContentIdeaRead])
+def list_ideas(
+    channel_id: uuid.UUID,
+    organization_id: uuid.UUID = Depends(get_current_organization_id),
+    db: DbSession = Depends(get_db),
+) -> list[ContentIdeaRead]:
+    ideas = ContentIdeaRepository(db).list_by_channel(
+        channel_id=channel_id, organization_id=organization_id
+    )
+    opportunities_by_idea = {
+        opportunity.idea_id: opportunity
+        for opportunity in ContentOpportunityRepository(db).list_latest_by_channel(
+            channel_id=channel_id, organization_id=organization_id
+        )
+    }
+
+    reads = []
+    for idea in ideas:
+        read = ContentIdeaRead.model_validate(idea)
+        opportunity = opportunities_by_idea.get(idea.id)
+        if opportunity is not None:
+            read.opportunity_score = opportunity.opportunity_score
+            read.reasoning_summary = opportunity.reasoning_summary
+        reads.append(read)
+
+    reads.sort(key=lambda read: read.opportunity_score or -1, reverse=True)
+    return reads
+
+
+@router.post("/{channel_id}/ideas/{idea_id}/approve", response_model=ContentIdeaRead)
+def approve_idea(
+    channel_id: uuid.UUID,
+    idea_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    organization_id: uuid.UUID = Depends(require_permission(Permission.CHANNEL_MANAGE)),
+    db: DbSession = Depends(get_db),
+) -> ContentIdeaRead:
+    idea = ContentIdeaService(db).approve(
+        channel_id=channel_id, idea_id=idea_id, organization_id=organization_id, user_id=user.id
+    )
+    return ContentIdeaRead.model_validate(idea)

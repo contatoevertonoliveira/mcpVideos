@@ -81,3 +81,17 @@ export interface ChannelStrategyStatus {
   active: ContentStrategySummary | null;
   pending_draft: ContentStrategySummary | null;
 }
+
+export interface ContentIdeaSummary {
+  id: string;
+  channel_id: string;
+  title: string;
+  summary: string | null;
+  recommended_format: string | null;
+  idea_type: string | null;
+  origin: "ai" | "trend" | "user" | "analytics" | "series" | "repurpose";
+  status: "draft" | "evaluating" | "recommended" | "rejected" | "approved" | "archived";
+  created_at: string;
+  opportunity_score: number | null;
+  reasoning_summary: string | null;
+}

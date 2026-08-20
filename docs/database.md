@@ -2,7 +2,7 @@
 
 > Mantido conforme Documento 03, seção 133. Atualizar a cada fase que alterar o domínio.
 
-Última atualização: Fase 08 — Strategy Engine.
+Última atualização: Fase 09 — Ideas & Opportunity Engine.
 
 ## ERD
 
@@ -27,6 +27,12 @@ erDiagram
     CHANNEL ||--o{ CONTENT_STRATEGY : "versioned history"
     CONTENT_STRATEGY ||--o{ CONTENT_PILLAR : has
     CONTENT_STRATEGY ||--o{ STRATEGY_RULE : has
+    CHANNEL ||--o{ CONTENT_IDEA : has
+    CONTENT_IDEA ||--o| CONTENT_OPPORTUNITY : "latest evaluation"
+    CONTENT_OPPORTUNITY ||--o{ OPPORTUNITY_SCORE : "9 components"
+    CONTENT_IDEA ||--o{ IDEA_RELATIONSHIP : "as idea_id (duplicate of)"
+    CONTENT_IDEA ||--o{ IDEA_RELATIONSHIP : "as related_idea_id (original)"
+    CHANNEL ||--o{ CONTENT_CLUSTER : "has (unused, no flow yet)"
 
     ORGANIZATION {
         uuid id PK
@@ -308,6 +314,66 @@ erDiagram
         int priority
         boolean active
     }
+
+    CONTENT_IDEA {
+        uuid id PK
+        uuid organization_id FK
+        uuid channel_id FK
+        string title
+        text summary
+        string recommended_format
+        string idea_type "pilar de conteudo sugerido, texto livre"
+        enum origin "ai|trend|user|analytics|series|repurpose"
+        enum status "draft|evaluating|recommended|rejected|approved|archived"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    CONTENT_OPPORTUNITY {
+        uuid id PK
+        uuid organization_id FK
+        uuid channel_id FK
+        uuid idea_id FK
+        float opportunity_score "calculado em codigo, nunca pelo LLM"
+        string recommended_format
+        text reasoning_summary
+        enum status "recommended | rejected"
+        timestamptz created_at
+    }
+
+    OPPORTUNITY_SCORE {
+        uuid id PK
+        uuid organization_id FK
+        uuid opportunity_id FK "UK with score_type"
+        enum score_type "UK with opportunity_id - 9 tipos"
+        float score
+        float weight
+        float weighted_score
+        float confidence
+        jsonb evidence_json
+        timestamptz created_at
+    }
+
+    CONTENT_CLUSTER {
+        uuid id PK
+        uuid organization_id FK
+        uuid channel_id FK
+        string name
+        text description
+        enum status
+        jsonb cluster_json
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    IDEA_RELATIONSHIP {
+        uuid id PK
+        uuid organization_id FK
+        uuid idea_id FK "UK with related_idea_id+relationship_type"
+        uuid related_idea_id FK "UK with idea_id+relationship_type"
+        enum relationship_type "UK with idea_id+related_idea_id - parent|child|related|repurpose|sequel|series, hoje so RELATED e usado"
+        timestamptz created_at
+    }
 ```
 
 `FEATURE_FLAG` fica fora do diagrama de relacionamentos porque `scope_id` é polimórfico (aponta para `organizations.id` ou `channels.id` dependendo de `scope_type`, ou é nulo quando `scope_type=global`) — não tem FK fixa de propósito (Documento 03, seção 85).
@@ -326,7 +392,8 @@ erDiagram
 | 06 | `channel_profiles`, `audience_profiles` | ✅ |
 | 07 | `channel_dna_versions`, `brand_profiles` | ✅ |
 | 08 | `content_strategies`, `content_pillars`, `strategy_rules` | ✅ |
-| 09+ | `content_ideas`, `content_opportunities`, `opportunity_scores`, `content_clusters`, `idea_relationships`, ... | ⏳ |
+| 09 | `content_ideas`, `content_opportunities`, `opportunity_scores`, `content_clusters`, `idea_relationships` | ✅ |
+| 10+ | `content_calendar_entries`, ... | ⏳ |
 
 Ver Documento 03, seções 110-129 para o mapeamento completo fase → entidades. `sessions` não está no Documento 03 (que deixa "sessions/tokens conforme implementação" em aberto — Documento 10 §112) — modelada aqui seguindo os campos exatos do Documento 09 §6 (`session_id`, `user_id`, `created_at`, `expires_at`, `last_seen_at`, `revoked_at`).
 
@@ -395,3 +462,12 @@ Ver Documento 03, seções 110-129 para o mapeamento completo fase → entidades
 - **`strategy_rules` não é gerado por agente** — o contrato de output do Strategy Agent (Documento 05 §8) não tem um campo de "regras explícitas", só `recommendations`/`risks`. Modelado como entidade CRUD simples do usuário, mesmo espírito de `brand_profiles`.
 - **`content_pillars` é criado junto com cada versão de estratégia** (FK `strategy_id`), não editado isoladamente depois — o agente propõe os pilares como parte do pacote da versão; mudar pilares significa gerar uma nova versão de estratégia.
 - **Quarta task Celery do projeto** (`app/tasks/channel_strategy.py`, nome lógico `channel.strategy`), reusando `mark_running_with_retry`. `approve()` em si roda síncrono (sem LLM, transição de estado rápida) — só a geração de uma nova versão passa por Celery.
+
+## Decisões de modelagem (Fase 09)
+
+- **`opportunity_scores` guarda os 9 componentes, nunca a nota final vinda do LLM.** O contrato de output do Opportunity Evaluator (`app/agents/schemas.py`) deliberadamente não tem campo `final_score`/`recommendation` — o Documento 10 F09 exige "cálculo final deve ocorrer em código". `app/services/opportunity_scoring.py` guarda os pesos (`SCORE_WEIGHTS`, somando exatamente 1.0) e computa `final_score`/`recommended` de forma pura e testável, persistidos em `content_opportunities`. Isso também resolveu uma divergência entre documentos: o exemplo ilustrativo do Documento 05 tinha um 10º componente (`production_feasibility`) que não está entre os 9 `score_type` do Documento 03 §24 — o Documento 03 foi tratado como a fonte de verdade do schema persistido, e `production_feasibility` foi descartado do contrato Pydantic.
+- **`content_ideas.status` é o hub de estado da ideia** (draft → evaluating → recommended/rejected → approved, ou archived se for duplicata) — `content_opportunities` é só o *resultado da última avaliação*, não o estado corrente da ideia; por isso `GET /channels/{id}/ideas` junta a ideia com a oportunidade mais recente em vez de duas fontes de verdade concorrentes.
+- **Deduplicação nunca descarta silenciosamente.** Uma sugestão do Idea Agent quase-idêntica a uma ideia já existente (heurística Jaccard ≥0.6 sobre os tokens do título, sem stopwords) ainda vira uma linha em `content_ideas` — só que já nasce `status=archived` — e é ligada à original via `idea_relationships(relationship_type=RELATED)`. A alternativa (não persistir a duplicata) apagaria o rastro de que o agente a propôs.
+- **`idea_relationships` é direcional** (`idea_id` = a nova/duplicata, `related_idea_id` = a original) com `UniqueConstraint(idea_id, related_idea_id, relationship_type)`. O enum `IdeaRelationshipType` já traz os 6 valores do Documento 03 §26 (`parent`/`child`/`related`/`repurpose`/`sequel`/`series`), mas nesta fase só `RELATED` é de fato produzido (pela deduplicação) — os demais existem no schema para quando fases futuras (series/repurpose de conteúdo) precisarem, sem exigir migration nova.
+- **`content_clusters` existe no schema (Documento 03 §26) mas sem nenhum fluxo/endpoint que a use ainda** — nenhum agente desta fase produz clusters, e o Documento 07 não detalha o suficiente sobre a lógica de clusterização para implementar algo real sem inventar comportamento. Criar a tabela agora (vazia) segue a mesma régua já usada para `content_clusters`/`strategy_rules` em fases anteriores: a tabela nasce quando o Documento 03 a atribui à fase, mesmo que o fluxo que a povoa venha depois.
+- **5ª e 6ª tasks Celery do projeto** (`idea.generation`, `opportunity.evaluation`), reusando `mark_running_with_retry`. Diferente de `channel.strategy` (nunca auto-disparada), `idea.generation` bem-sucedida faz fan-out automático — dispara um `opportunity.evaluation` por `ContentIdea` nova (nunca para as arquivadas por deduplicação), já que avaliar cada ideia proposta é sempre o próximo passo esperado, sem exigir aprovação humana intermediária (diferente da ativação de uma Strategy).
