@@ -128,7 +128,7 @@ Ou sem Docker, rodando cada app localmente (ver `README.md`).
 
 ## 5. Pendências / Perguntas em Aberto
 
-- Decidir se criamos o primeiro commit Git agora ou mais adiante (repo iniciado, remote `origin` configurado para `https://github.com/contatoevertonoliveira/mcpVideos.git`, nada commitado/pushed ainda).
+- Nenhuma pendência bloqueante — Fase 01 commitada e enviada para o GitHub (ver seção 6).
 - Documento 10 (seção 137) sugere organizar os documentos em `/docs/master/` com slugs (`01-product-brief.md`, etc.) — não feito; usuário optou implicitamente por manter o padrão atual `Documento NN - Titulo.md` ao pedir para seguir direto para a Fase 01.
 - Ainda não definido: nome comercial do produto, provedor de IA/mídia real a integrar primeiro na Fase 13 (Documento 10 §71 pede benchmark atualizado antes de decidir — não assumir Higgsfield/Kie/fal.ai/WaveSpeed/Replicate como escolha final), moeda/plano de billing.
 
@@ -161,6 +161,8 @@ Ou sem Docker, rodando cada app localmente (ver `README.md`).
 - Usuário instalou o Docker Desktop e rodou `wsl` + `docker compose version` — Docker Desktop já estava rodando no Windows, só faltava integração/PATH. Confirmei via PowerShell que o Docker Desktop estava instalado e o daemon respondendo (`docker ps` funcionando pelo caminho completo do executável).
 - Rodei `docker compose up --build -d` de verdade: as 6 imagens buildaram, todos os containers subiram (`postgres`/`redis`/`minio` chegaram a `healthy`). Rodei `infra/scripts/smoke-test.sh`: os 4 checks passaram. Confirmei via `curl` que o frontend mostra "Conectado" (fetch real via rede Docker) e via logs que o worker Celery conectou ao Redis (`ready`) e a API criou o bucket MinIO no startup sem erro.
 - **Fase 01 agora está 100% validada**, incluindo o critério de aceite que antes só tinha sido checado estaticamente.
+- Usuário pediu para commitar e dar push. Commit único `b3041ae` ("feat(F01): project foundation", 107 arquivos) criado e enviado para `main` em `https://github.com/contatoevertonoliveira/mcpVideos.git`. Working tree limpo, branch `main` rastreando `origin/main`.
+- Usuário pediu para não usar a porta 8000 no host (outro projeto já ocupa essa porta). Porta do host da `api` alterada para **8002** (`API_PORT:-8002` em `docker-compose.yml`, `.env.example`, `.env`, `infra/scripts/smoke-test.sh`, `README.md`); a porta **interna** do container continua 8000 (não afeta a comunicação `web` → `api` via rede Docker). Stack recriado (`docker compose up -d`) e revalidado com `smoke-test.sh` + `curl` no `localhost:3000` — tudo OK na nova porta. Mudança ainda **não commitada**.
 - Próximo passo: iniciar a Fase 02 — Core Domain & Database.
 
 ---

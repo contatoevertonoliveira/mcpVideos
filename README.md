@@ -45,7 +45,7 @@ cp apps/web/.env.example apps/web/.env
 docker compose up
 ```
 
-Isso sobe: `web` (Next.js, porta 3000), `api` (FastAPI, porta 8000), `worker` (Celery), `postgres` (5432), `redis` (6379) e `minio` (9000/9001, console em `/minio/`).
+Isso sobe: `web` (Next.js, porta 3000), `api` (FastAPI, porta **8002** no host — porta 8000 evitada de propósito para não colidir com outros projetos locais), `worker` (Celery), `postgres` (5432), `redis` (6379) e `minio` (9000/9001, console em `/minio/`).
 
 Validar que tudo subiu corretamente:
 
@@ -65,7 +65,7 @@ python -m venv .venv
 ./.venv/Scripts/activate       # Windows
 # source .venv/bin/activate    # Linux/Mac
 pip install -r requirements-dev.txt
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 8002
 ```
 
 Comandos úteis:

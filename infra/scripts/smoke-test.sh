@@ -4,7 +4,7 @@
 # and that the frontend is serving.
 set -euo pipefail
 
-API_URL="${API_URL:-http://localhost:8000}"
+API_URL="${API_URL:-http://localhost:8002}"
 WEB_URL="${WEB_URL:-http://localhost:3000}"
 
 check() {

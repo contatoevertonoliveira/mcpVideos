@@ -62,7 +62,7 @@ services:
       SECRET_KEY: ${SECRET_KEY:-change-me-in-env}
       CORS_ALLOW_ORIGINS: '["http://localhost:3000"]'
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "${API_PORT:-8002}:8000"
     volumes:
       - ./apps/api:/app
     depends_on:
