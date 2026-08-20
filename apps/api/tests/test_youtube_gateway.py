@@ -46,9 +46,7 @@ async def test_fake_gateway_content_is_deterministic_across_calls():
     assert any(v.duration_seconds <= 60 for v in videos_1)
     assert any(v.duration_seconds > 60 for v in videos_1)
 
-    metrics = await gateway.get_video_metrics(
-        "token", [v.external_video_id for v in videos_1]
-    )
+    metrics = await gateway.get_video_metrics("token", [v.external_video_id for v in videos_1])
     assert len(metrics) == len(videos_1)
     assert all(m.views is not None for m in metrics)
 

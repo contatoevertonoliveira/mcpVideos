@@ -5,9 +5,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getSessionToken } from "@/lib/session-cookie";
-import { listChannels, listChannelVideos } from "@/services/api/channels";
+import { getChannelIntelligence, listChannels, listChannelVideos } from "@/services/api/channels";
 
-import { disconnectChannelAction, triggerSyncAction } from "./actions";
+import { disconnectChannelAction, triggerAnalysisAction, triggerSyncAction } from "./actions";
 
 function formatLastSynced(lastSyncedAt: string | null): string {
   if (!lastSyncedAt) {
@@ -40,6 +40,9 @@ export default async function ChannelsPage(props: PageProps<"/channels">) {
   const channels = await listChannels(token);
   const videoCounts = await Promise.all(
     channels.map((channel) => listChannelVideos(token, channel.id).then((videos) => videos.length)),
+  );
+  const intelligence = await Promise.all(
+    channels.map((channel) => getChannelIntelligence(token, channel.id)),
   );
 
   return (
@@ -96,6 +99,12 @@ export default async function ChannelsPage(props: PageProps<"/channels">) {
                           Sincronizar agora
                         </Button>
                       </form>
+                      <form action={triggerAnalysisAction}>
+                        <input type="hidden" name="channel_id" value={channel.id} />
+                        <Button type="submit" variant="outline" size="sm">
+                          Analisar canal
+                        </Button>
+                      </form>
                       <form action={disconnectChannelAction}>
                         <input type="hidden" name="channel_id" value={channel.id} />
                         <Button type="submit" variant="outline" size="sm">
@@ -105,6 +114,28 @@ export default async function ChannelsPage(props: PageProps<"/channels">) {
                     </div>
                   )}
                 </div>
+                {intelligence[index].channel_profile && (
+                  <div className="mt-1 rounded-md border border-border bg-muted/30 p-3">
+                    <p className="text-xs font-medium uppercase tracking-wide text-foreground">
+                      Diagnóstico
+                    </p>
+                    <p className="mt-1">
+                      {intelligence[index].channel_profile?.primary_category ?? "Categoria não identificada"}
+                      {" · "}
+                      {intelligence[index].channel_profile?.primary_language ?? "Idioma não identificado"}
+                      {" · confiança "}
+                      {Math.round((intelligence[index].channel_profile?.confidence ?? 0) * 100)}%
+                    </p>
+                    {intelligence[index].channel_profile?.estimated_audience && (
+                      <p className="mt-1">
+                        Audiência estimada: {intelligence[index].channel_profile?.estimated_audience}
+                      </p>
+                    )}
+                    {intelligence[index].channel_profile?.content_summary && (
+                      <p className="mt-1">{intelligence[index].channel_profile?.content_summary}</p>
+                    )}
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}

@@ -30,6 +30,7 @@ from app.repositories.source_video import SourceVideoRepository
 from app.repositories.source_video_metric import SourceVideoMetricRepository
 from app.security.encryption import decrypt_token, encrypt_token
 from app.services.audit import AuditService
+from app.tasks.channel_intelligence import dispatch_channel_intelligence
 
 # A short-form video on YouTube has no dedicated Data API flag - duration is
 # the standard heuristic used by the ecosystem (Documento 03 sec. 12 lists
@@ -133,6 +134,17 @@ class ChannelSyncService:
                     "metrics_captured": metrics_created,
                 },
             )
+
+            # Documento 04 sec. 4 event chain: channel.connection.created ->
+            # channel.sync.completed -> channel.analysis.completed. Only on
+            # the first-ever import, matching the onboarding UI beat from
+            # Documento 06 ("Analisando canal... -> Diagnostico encontrado")
+            # - re-syncs don't re-trigger an LLM analysis on their own,
+            # that's a manual "Analisar novamente" action instead.
+            if sync_type == SyncType.INITIAL and video_rows:
+                dispatch_channel_intelligence(
+                    self.session, channel_id=channel_id, organization_id=organization_id
+                )
             return run
         except Exception as exc:
             now = datetime.now(UTC)

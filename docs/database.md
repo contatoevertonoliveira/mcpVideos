@@ -2,7 +2,7 @@
 
 > Mantido conforme Documento 03, seção 133. Atualizar a cada fase que alterar o domínio.
 
-Última atualização: Fase 05 — Channel Importer.
+Última atualização: Fase 06 — Channel Intelligence.
 
 ## ERD
 
@@ -20,6 +20,8 @@ erDiagram
     CHANNEL ||--o{ SOURCE_VIDEO : has
     CHANNEL ||--o{ SOURCE_PLAYLIST : has
     SOURCE_VIDEO ||--o{ SOURCE_VIDEO_METRIC : "historical snapshots"
+    CHANNEL ||--o| CHANNEL_PROFILE : "has one"
+    CHANNEL ||--o{ AUDIENCE_PROFILE : "versioned history"
 
     ORGANIZATION {
         uuid id PK
@@ -201,6 +203,30 @@ erDiagram
         float impressions_ctr "NULL ate Fase 19"
         jsonb raw_metrics_json
     }
+
+    CHANNEL_PROFILE {
+        uuid id PK
+        uuid organization_id FK
+        uuid channel_id FK "UK - uma linha por canal"
+        string primary_language
+        string primary_category
+        string estimated_audience
+        text content_summary
+        float confidence
+        timestamptz generated_at
+        timestamptz updated_at
+    }
+
+    AUDIENCE_PROFILE {
+        uuid id PK
+        uuid organization_id FK
+        uuid channel_id FK "UK with version"
+        int version "UK with channel_id"
+        jsonb profile_json
+        float confidence
+        enum source
+        timestamptz created_at
+    }
 ```
 
 `FEATURE_FLAG` fica fora do diagrama de relacionamentos porque `scope_id` é polimórfico (aponta para `organizations.id` ou `channels.id` dependendo de `scope_type`, ou é nulo quando `scope_type=global`) — não tem FK fixa de propósito (Documento 03, seção 85).
@@ -216,7 +242,8 @@ erDiagram
 | 03 | `sessions` (modelo `UserSession`) | ✅ |
 | 04 | `channel_connections`, `channel_sync_runs` | ✅ |
 | 05 | `source_videos`, `source_playlists`, `source_video_metrics` | ✅ |
-| 06+ | `channel_profiles`, `audience_profiles`, ... | ⏳ |
+| 06 | `channel_profiles`, `audience_profiles` | ✅ |
+| 07+ | `channel_dna_versions`, `brand_profiles`, ... | ⏳ |
 
 Ver Documento 03, seções 110-129 para o mapeamento completo fase → entidades. `sessions` não está no Documento 03 (que deixa "sessions/tokens conforme implementação" em aberto — Documento 10 §112) — modelada aqui seguindo os campos exatos do Documento 09 §6 (`session_id`, `user_id`, `created_at`, `expires_at`, `last_seen_at`, `revoked_at`).
 
@@ -257,3 +284,12 @@ Ver Documento 03, seções 110-129 para o mapeamento completo fase → entidades
 - **`YouTubeGateway` ganhou `list_playlists`/`list_videos`/`get_video_metrics`.** `GoogleYouTubeGateway` implementa a sequência real (`channels.list` para achar a playlist de uploads → `playlistItems.list` → `videos.list` em lotes de 50, com paginação limitada a 5 páginas como cap de segurança para o MVP). `FakeYouTubeGateway` devolve sempre os mesmos 5 vídeos/1 playlist determinísticos (2 shorts + 3 vídeos longos), para que o teste de "não duplica no re-sync" seja exercitável sem rede.
 - **Primeira task Celery real do projeto** (`app/tasks/channel_sync.py`, nome lógico `channel.sync.v1` do Documento 04 §16). O motor completo de workflows versionados (`workflow_runs`, retry/resume/pause) só chega na Fase 11 — aqui é uma única task Celery com retry simples (`max_retries=3`, backoff exponencial com jitter), seguindo a regra fundamental de jobs do Documento 02 §21: o estado vive em `channel_sync_runs`/`jobs` no Postgres, o Celery só executa.
 - **Bug real encontrado via teste manual no navegador (não pelos testes automatizados):** o disparo do sync (`dispatch_channel_sync`) cria a linha `Job` e chama `.delay()` dentro da mesma transação HTTP que ainda não commitou — o worker Celery, rodando em outro processo/conexão, às vezes lia o Postgres *antes* do commit da API terminar e falhava com "Job not found". Reproduzido de forma determinística disparando `POST /channels/{id}/sync` manualmente contra a stack Docker real. Corrigido com um retry curto e limitado (`_mark_running_with_retry`, até 5 tentativas / 1.5s) na primeira leitura do Job dentro da task, em vez de um padrão de outbox transacional completo (mais mecanismo do que esta fase precisa). Validado com 3 disparos concorrentes reais sem nenhuma falha.
+
+## Decisões de modelagem (Fase 06)
+
+- **`channel_profiles` é upsert-in-place (uma linha por canal, unique constraint em `channel_id`)** — "visão resumida atual" (Documento 03 §15). **`audience_profiles` é versionada e append-only (unique constraint em `channel_id + version`, sem `updated_at`)** — cada análise insere uma nova linha; a de `version` mais alta é a corrente. Essa assimetria já está no Documento 03 (Channel Profile não tem campo `version`, Audience Profile tem) e foi seguida à risca.
+- **`channel_profiles` não tem coluna para o output completo do agente** (patterns, anomalias, evidence) — só os 4 campos-resumo do Documento 03 §15 + `confidence`. O conhecimento estruturado profundo e versionado (`classification_json`, `content_patterns_json` etc.) é explicitamente o Channel DNA da Fase 07 (Documento 03 §16) — persistir isso agora seria antecipar entidade de fase futura. O `evidence`/patterns de cada rodada fica só no `audit_logs.metadata_json` (rastreável, mas não uma tabela de domínio nova).
+- **`LLMGateway` com duas implementações**, mesmo padrão do `YouTubeGateway` (Fase 04): `AnthropicLLMGateway` (real, via `httpx` direto — sem SDK, chamando a Anthropic Messages API) e `FakeLLMGateway` (determinística, com respostas fixas por `prompt_id` ao invés de preencher um schema genérico por reflection — mesma filosofia do `FakeYouTubeGateway`: um fake fixo e realista, não um preenchedor genérico). Escolha via `Settings.llm_fake_gateway` (`LLM_FAKE_GATEWAY=true` por padrão; usuário optou por seguir só com o fake por enquanto, como na Fase 04).
+- **AgentRuntime mínimo** (`app/agents/runtime.py`): só carrega o prompt versionado do arquivo (`agents/prompts/<agent_id>/v<N>.md`, Documento 02 §29/Documento 05 §51) e chama `LLMGateway.generate_structured`. Sem `agent_runs`/registry em banco — isso é a "arquitetura completa" que o Documento 10 explicitamente reserva para a Fase 11.
+- **Segunda task Celery do projeto** (`app/tasks/channel_intelligence.py`, nome lógico `channel.intelligence`). O retry de visibilidade do Job (`_mark_running_with_retry`, bug real da Fase 05) foi extraído para `app/tasks/_job_utils.py` e reusado aqui — a mesma race entre commit da API e pickup do worker se aplica a qualquer task disparada por esse padrão.
+- **Análise dispara automaticamente só no sync `INITIAL`** (conexão do canal), não em re-syncs `INCREMENTAL`/`MANUAL`/`FULL` — seguindo a cadeia de eventos do Documento 04 §4 (`channel.connection.created → channel.sync.completed → channel.analysis.completed`) e a tela de onboarding do Documento 06 ("Analisando canal... → Diagnóstico encontrado"). Re-analisar sob demanda é uma ação manual (`POST /channels/{id}/analyze`) — evita custo de LLM em toda sincronização incremental, sem depender do Budget/Cost Controller (que ainda não existe, chega em fases futuras).

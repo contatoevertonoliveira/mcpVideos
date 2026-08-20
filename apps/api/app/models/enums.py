@@ -122,3 +122,12 @@ class SourceVideoType(StrEnum):
     LONG_FORM = "long_form"
     LIVE = "live"
     UNKNOWN = "unknown"
+
+
+class AudienceProfileSource(StrEnum):
+    """Documento 03, secao 17."""
+
+    YOUTUBE = "youtube"
+    USER = "user"
+    INFERRED = "inferred"
+    MIXED = "mixed"

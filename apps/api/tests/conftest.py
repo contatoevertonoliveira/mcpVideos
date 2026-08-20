@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.redis import get_redis_client
 from app.db.session import get_db
 from app.main import app
+from app.tasks import channel_intelligence as channel_intelligence_tasks
 from app.tasks import channel_sync as channel_sync_tasks
 
 TEST_DATABASE_URL = os.environ.get(
@@ -33,6 +34,9 @@ def no_celery_dispatch(monkeypatch):
     the real Redis broker. The task body itself is tested directly (with
     its own db_session), never through .delay()."""
     monkeypatch.setattr(channel_sync_tasks.run_channel_sync_task, "delay", MagicMock())
+    monkeypatch.setattr(
+        channel_intelligence_tasks.run_channel_intelligence_task, "delay", MagicMock()
+    )
 
 
 @pytest.fixture(scope="session")

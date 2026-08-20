@@ -46,9 +46,7 @@ def get_current_organization_id(
     user_session: UserSession = Depends(get_current_session),
 ) -> uuid.UUID:
     if user_session.active_organization_id is None:
-        raise AuthenticationError(
-            "No active organization selected", code="NO_ACTIVE_ORGANIZATION"
-        )
+        raise AuthenticationError("No active organization selected", code="NO_ACTIVE_ORGANIZATION")
     return user_session.active_organization_id
 
 

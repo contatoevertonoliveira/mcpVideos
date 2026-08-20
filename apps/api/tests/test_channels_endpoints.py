@@ -184,9 +184,7 @@ def test_trigger_sync_creates_job(client):
     token = _register_and_get_token(client)
     channel = _connect_channel(client, token)
 
-    response = client.post(
-        f"/api/v1/channels/{channel['id']}/sync", headers=_auth_headers(token)
-    )
+    response = client.post(f"/api/v1/channels/{channel['id']}/sync", headers=_auth_headers(token))
 
     assert response.status_code == 200
     body = response.json()
@@ -197,9 +195,7 @@ def test_trigger_sync_creates_job(client):
 def test_trigger_sync_unknown_channel_returns_404(client):
     token = _register_and_get_token(client)
 
-    response = client.post(
-        f"/api/v1/channels/{uuid.uuid4()}/sync", headers=_auth_headers(token)
-    )
+    response = client.post(f"/api/v1/channels/{uuid.uuid4()}/sync", headers=_auth_headers(token))
 
     assert response.status_code == 404
 
@@ -223,3 +219,75 @@ def test_list_videos_and_sync_runs_start_empty_for_a_new_channel(client):
     assert runs_response.status_code == 200
     assert len(runs_response.json()) == 1
     assert runs_response.json()[0]["sync_type"] == "initial"
+
+
+def test_get_intelligence_before_analysis_returns_nulls(client):
+    token = _register_and_get_token(client)
+    channel = _connect_channel(client, token)
+
+    response = client.get(
+        f"/api/v1/channels/{channel['id']}/intelligence", headers=_auth_headers(token)
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"channel_profile": None, "audience_profile": None}
+
+
+def test_trigger_analysis_creates_job(client):
+    token = _register_and_get_token(client)
+    channel = _connect_channel(client, token)
+
+    response = client.post(
+        f"/api/v1/channels/{channel['id']}/analyze", headers=_auth_headers(token)
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "job_id" in body
+    assert "correlation_id" in body
+
+
+def test_trigger_analysis_unknown_channel_returns_404(client):
+    token = _register_and_get_token(client)
+
+    response = client.post(f"/api/v1/channels/{uuid.uuid4()}/analyze", headers=_auth_headers(token))
+
+    assert response.status_code == 404
+
+
+def test_get_intelligence_after_analysis_returns_profiles(client, db_session):
+    import asyncio
+
+    from app.gateways.llm import FakeLLMGateway
+    from app.gateways.youtube import FakeYouTubeGateway
+    from app.models.enums import SyncType
+    from app.services.channel_intelligence import ChannelIntelligenceService
+    from app.services.channel_sync import ChannelSyncService
+
+    token = _register_and_get_token(client)
+    channel = _connect_channel(client, token)
+    channel_id = uuid.UUID(channel["id"])
+    organization_id = uuid.UUID(channel["organization_id"])
+
+    # The endpoints only dispatch (mocked) Celery tasks - run the sync and
+    # analysis synchronously here, sharing the same db_session as the
+    # client fixture, to seed real data for the GET below.
+    async def _seed() -> None:
+        await ChannelSyncService(db_session, gateway=FakeYouTubeGateway()).run_sync(
+            channel_id=channel_id, organization_id=organization_id, sync_type=SyncType.MANUAL
+        )
+        await ChannelIntelligenceService(db_session, llm_gateway=FakeLLMGateway()).analyze_channel(
+            channel_id=channel_id, organization_id=organization_id
+        )
+
+    asyncio.run(_seed())
+
+    response = client.get(
+        f"/api/v1/channels/{channel['id']}/intelligence", headers=_auth_headers(token)
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["channel_profile"] is not None
+    assert body["audience_profile"] is not None
+    assert body["channel_profile"]["primary_language"] == "pt-BR"

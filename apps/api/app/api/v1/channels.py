@@ -12,14 +12,22 @@ from app.domain.permissions import Permission
 from app.models.channel import Channel
 from app.models.enums import SyncType
 from app.models.user import User
+from app.repositories.audience_profile import AudienceProfileRepository
 from app.repositories.channel import ChannelRepository
+from app.repositories.channel_profile import ChannelProfileRepository
 from app.repositories.channel_sync_run import ChannelSyncRunRepository
 from app.repositories.source_video import SourceVideoRepository
 from app.schemas.channel import ChannelRead
 from app.schemas.channel_connection import ConnectChannelResponse, OAuthCallbackRequest
+from app.schemas.channel_intelligence import (
+    AudienceProfileRead,
+    ChannelIntelligenceRead,
+    ChannelProfileRead,
+)
 from app.schemas.channel_sync_run import ChannelSyncRunRead, TriggerSyncResponse
 from app.schemas.source_video import SourceVideoRead
 from app.services.channel_connection import ChannelConnectionService
+from app.tasks.channel_intelligence import dispatch_channel_intelligence
 from app.tasks.channel_sync import dispatch_channel_sync
 
 router = APIRouter(prefix="/channels", tags=["channels"])
@@ -119,3 +127,40 @@ def list_sync_runs(
         channel_id=channel_id, organization_id=organization_id
     )
     return [ChannelSyncRunRead.model_validate(run) for run in runs]
+
+
+@router.post("/{channel_id}/analyze", response_model=TriggerSyncResponse)
+def trigger_analysis(
+    channel_id: uuid.UUID,
+    organization_id: uuid.UUID = Depends(require_permission(Permission.CHANNEL_MANAGE)),
+    db: DbSession = Depends(get_db),
+) -> TriggerSyncResponse:
+    channel = ChannelRepository(db).get_by_id(channel_id, organization_id=organization_id)
+    if channel is None:
+        raise NotFoundError("Channel not found", code="CHANNEL_NOT_FOUND")
+
+    job = dispatch_channel_intelligence(db, channel_id=channel_id, organization_id=organization_id)
+    assert job.correlation_id is not None
+    return TriggerSyncResponse(job_id=job.id, correlation_id=job.correlation_id)
+
+
+@router.get("/{channel_id}/intelligence", response_model=ChannelIntelligenceRead)
+def get_intelligence(
+    channel_id: uuid.UUID,
+    organization_id: uuid.UUID = Depends(get_current_organization_id),
+    db: DbSession = Depends(get_db),
+) -> ChannelIntelligenceRead:
+    channel_profile = ChannelProfileRepository(db).get_by_channel(
+        channel_id, organization_id=organization_id
+    )
+    audience_profile = AudienceProfileRepository(db).get_current(
+        channel_id, organization_id=organization_id
+    )
+    return ChannelIntelligenceRead(
+        channel_profile=(
+            ChannelProfileRead.model_validate(channel_profile) if channel_profile else None
+        ),
+        audience_profile=(
+            AudienceProfileRead.model_validate(audience_profile) if audience_profile else None
+        ),
+    )

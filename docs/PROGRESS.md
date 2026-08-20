@@ -8,9 +8,9 @@
 
 ## 1. Status Geral
 
-**Fase atual:** ✅ **Fase 05 — Channel Importer implementada e validada de ponta a ponta**, inclusive testada manualmente no navegador (clicar "Sincronizar agora" → worker Celery real processa → vídeos aparecem). Ver seção 4.5 para o relatório completo. Fases 01-04 permanecem 100% validadas e commitadas (seções 4.1-4.4).
+**Fase atual:** ✅ **Fase 06 — Channel Intelligence implementada e validada de ponta a ponta**, inclusive testada manualmente no navegador (clicar "Analisar canal" → worker Celery real processa com Channel Analyst + Audience Analyst → diagnóstico aparece). Ver seção 4.6 para o relatório completo. Fases 01-05 permanecem 100% validadas e commitadas (seções 4.1-4.5).
 
-**Próximo passo:** commitar a Fase 05 (aguardando confirmação do usuário) e depois iniciar a **Fase 06 — Channel Intelligence**.
+**Próximo passo:** commitar a Fase 06 (aguardando confirmação do usuário) e depois iniciar a **Fase 07 — Channel DNA**.
 
 ---
 
@@ -277,12 +277,49 @@ bash infra/scripts/smoke-test.sh
 # e clicar em "Sincronizar agora" - a contagem de vídeos deve atualizar em poucos segundos
 ```
 
+### 4.6 Fase 06 — Relatório de Conclusão
+
+**Implementado:**
+- **2 entidades novas** (Documento 03 §15/17, Documento 10 F06): `channel_profiles` (upsert-in-place, uma linha por canal) e `audience_profiles` (versionada/append-only). Migration `af40e97c1986`.
+- **`LLMGateway`** (`app/gateways/llm.py`): abstração com `generate`/`generate_structured`/`stream` (Documento 02 §31). `AnthropicLLMGateway` (real, via `httpx` direto, sem SDK — mesmo estilo do `GoogleYouTubeGateway`) e `FakeLLMGateway` (determinística, respostas fixas por `prompt_id`). Selecionada por `Settings.llm_fake_gateway` (`LLM_FAKE_GATEWAY=true` por padrão — usuário optou por seguir só com o fake, como na Fase 04).
+- **AgentRuntime mínimo** (`app/agents/runtime.py`): carrega prompts versionados de `app/agents/prompts/<agent_id>/v<N>.md` (Documento 02 §29, Documento 05 §51) e chama o LLMGateway. Sem registry/`agent_runs` em banco — isso é a "arquitetura completa" reservada para a Fase 11.
+- **2 agentes de Intelligence** (Documento 05 §6-7): `channel_analyst` e `audience_analyst`, cada um com contrato de output em Pydantic (`app/agents/schemas.py`) espelhando exatamente os campos do documento (classification, patterns, anomalies, confidence, evidence / audience_segments, age_ranges, interests, confidence, evidence).
+- **`ChannelIntelligenceService`**: agentes propõem, o service valida (canal existe, tem vídeos importados) e persiste — nunca o contrário (CLAUDE.md: "agentes propõem, services validam"). `channel_profiles` é atualizado in-place; `audience_profiles` ganha uma nova versão a cada análise.
+- **Segunda task Celery do projeto** (`app/tasks/channel_intelligence.py`, nome lógico `channel.intelligence`). Análise dispara automaticamente só na sincronização `INITIAL` (Documento 04 §4: `channel.connection.created → channel.sync.completed → channel.analysis.completed`), não em re-syncs — evita custo de LLM a cada sync incremental. Re-análise sob demanda via `POST /channels/{id}/analyze`.
+- **Endpoints novos**: `POST /{id}/analyze` (requer `Permission.CHANNEL_MANAGE`), `GET /{id}/intelligence`.
+- **Frontend**: página `/channels` ganhou um bloco "Diagnóstico" (categoria, idioma, confiança, audiência estimada, resumo de conteúdo) e botão "Analisar canal" por canal conectado.
+- **Não implementado** (fora de escopo por definição): Channel DNA versionado e Brand Profile são Fase 07; credenciais reais da Anthropic não configuradas (`AnthropicLLMGateway` implementada e pronta, nunca exercitada); refresh automático de análise por mudança significativa de performance é o Workflow 03 (`channel.intelligence.refresh.v1`, ainda mais adiante).
+
+**Bug real de concorrência reaproveitado da Fase 05:** o mesmo retry de visibilidade do Job (`_mark_running_with_retry`) foi extraído para `app/tasks/_job_utils.py` compartilhado, já que a task `channel.intelligence` sofre exatamente a mesma race entre o commit da API/Celery-task-pai e o worker pegando a nova task.
+
+**Validado nesta sessão:**
+- 110 testes de backend (pytest) contra Postgres+Redis reais: `FakeLLMGateway` determinística (mesmo prompt_id sempre retorna o mesmo output; prompt_id desconhecido levanta erro), `ChannelIntelligenceService` completo (cria os dois profiles, upsert do channel_profile / versionamento do audience_profile, canal sem vídeos importados rejeitado, canal desconhecido rejeitado), retry de visibilidade do Job (agora compartilhado), endpoints HTTP (`/analyze`, `/intelligence`, 404 para canal desconhecido). `ruff`/`mypy` limpos.
+- Migration validada com ciclo `upgrade → downgrade → upgrade` no banco de dev e aplicada ao banco de teste.
+- Stack Docker reconstruída (api+worker); **fluxo automático completo validado contra infraestrutura real**: conectar canal via `curl` → worker processou `channel.sync` e, em seguida, `channel.intelligence` automaticamente → `GET /{id}/intelligence` retornou Channel Profile (categoria "Tecnologia e Reviews", pt-BR, confiança 0.62) e Audience Profile (segmentos, faixas etárias, versão 1) coerentes com os dados fake importados.
+- Frontend: `eslint`, `tsc --noEmit` (com `next typegen`), `vitest`, `next build` — todos limpos. **Validado clicando "Analisar canal" no navegador real**: bloco "Diagnóstico" apareceu com categoria/idioma/confiança/audiência estimada/resumo, confirmando o clique → Server Action → API → Celery → Postgres → nova renderização.
+
+**Pendências / Known Limitations:**
+- Credenciais reais da Anthropic (`ANTHROPIC_API_KEY`) não configuradas — mesma situação do Google OAuth na Fase 04.
+- Channel DNA (versionado, Fase 07) ainda não existe — `channel_profiles` é só o resumo leve atual.
+- `docs/database.md` atualizado com `channel_profiles`/`audience_profiles` no ERD e as decisões desta fase.
+
+**Como validar:**
+```bash
+cd apps/api && pytest -v
+cd apps/web && npm run lint && npm run typecheck && npm run test && npm run build
+docker compose up -d --build
+bash infra/scripts/smoke-test.sh
+# depois, testar manualmente: conectar um canal em http://localhost:3000/channels
+# e clicar em "Analisar canal" - o bloco "Diagnóstico" deve aparecer em poucos segundos
+```
+
 ## 5. Pendências / Perguntas em Aberto
 
-- Fases 01-04 commitadas e enviadas para `main` (`b3041ae`, `ed9b437`, `7b54b9c`, `4e5ecdc`, `7675039`). **Fase 05 implementada e validada nesta sessão, ainda não commitada** — aguardando confirmação do usuário.
+- Fases 01-05 commitadas e enviadas para `main` (`b3041ae`, `ed9b437`, `7b54b9c`, `4e5ecdc`, `7675039`, `ecf72cd`). **Fase 06 implementada e validada nesta sessão, ainda não commitada** — aguardando confirmação do usuário.
 - Documento 10 (seção 137) sugere organizar os documentos em `/docs/master/` com slugs (`01-product-brief.md`, etc.) — não feito; usuário optou implicitamente por manter o padrão atual `Documento NN - Titulo.md` ao pedir para seguir direto para a Fase 01.
 - Ainda não definido: nome comercial do produto, provedor de IA/mídia real a integrar primeiro na Fase 13 (Documento 10 §71 pede benchmark atualizado antes de decidir — não assumir Higgsfield/Kie/fal.ai/WaveSpeed/Replicate como escolha final), moeda/plano de billing.
 - Credenciais reais do Google Cloud (`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`) ainda não configuradas — usuário optou por seguir só com `FakeYouTubeGateway` por enquanto (Fase 04). `GoogleYouTubeGateway` está implementada e pronta (incluindo os métodos de import da Fase 05), mas nunca exercitada contra o Google real.
+- Credenciais reais da Anthropic (`ANTHROPIC_API_KEY`) também não configuradas — usuário optou por seguir só com `FakeLLMGateway` por enquanto (Fase 06), mesmo padrão de decisão da Fase 04. `AnthropicLLMGateway` implementada e pronta, nunca exercitada.
 - Direção visual: usuário pediu explicitamente uma estética moderna, típica de produto de IA para vídeo, quando chegarmos na fase de UX/UI (Documento 08) — a aparência atual é esqueleto funcional deliberado, não uma pendência de bug.
 
 ---
@@ -351,6 +388,14 @@ bash infra/scripts/smoke-test.sh
 - **Bug real de concorrência encontrado e corrigido via teste manual contra a stack Docker real** (não pego pelos testes automatizados): race condition entre o commit da transação HTTP e o worker Celery pegando a task, causando `Job not found` intermitente. Corrigido com retry curto e limitado na primeira leitura do Job.
 - 97 testes de backend passando; `ruff`/`mypy`/`eslint`/`tsc`/`vitest`/`next build` limpos. Fluxo completo validado com curl (incluindo 3 syncs concorrentes) e no navegador real (clicar "Sincronizar agora" → contagem de vídeos atualiza).
 - Próximo passo: usuário decide se commita/envia a Fase 05 agora.
+
+### 2026-08-20 — Commit/push da Fase 05 + Fase 06 — Channel Intelligence (mesma data, sessão seguinte)
+- Usuário pediu para commitar/enviar a Fase 05 e já seguir para a Fase 06 na mesma mensagem. Commit `ecf72cd` ("feat(F05): channel importer") criado e enviado para `main`.
+- Implementadas as 2 entidades (`channel_profiles`, `audience_profiles`), `LLMGateway` (real via Anthropic Messages API por `httpx` direto + `FakeLLMGateway` determinística — usuário optou por seguir só com a fake, mesmo padrão da Fase 04), AgentRuntime mínimo (prompts versionados em arquivo, sem registry em banco), os agentes `channel_analyst`/`audience_analyst` (Documento 05 §6-7), `ChannelIntelligenceService`, e a segunda task Celery do projeto (`app/tasks/channel_intelligence.py`).
+- Conectar canal agora dispara análise automaticamente após o sync inicial (cadeia de eventos do Documento 04 §4); endpoint manual `POST /channels/{id}/analyze` e leitura via `GET /{id}/intelligence` também implementados.
+- Reaproveitado (extraído para `app/tasks/_job_utils.py`) o fix da race condition de visibilidade do Job encontrada na Fase 05, já que a nova task sofre exatamente o mesmo problema.
+- 110 testes de backend passando; `ruff`/`mypy`/`eslint`/`tsc`/`vitest`/`next build` limpos. Fluxo automático completo validado via `curl` contra a stack Docker real (connect → sync → intelligence em cadeia) e no navegador real (clicar "Analisar canal" → bloco "Diagnóstico" aparece).
+- Próximo passo: usuário decide se commita/envia a Fase 06 agora.
 
 ---
 

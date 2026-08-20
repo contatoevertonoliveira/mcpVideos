@@ -20,9 +20,7 @@ class ChannelConnection(UUIDPrimaryKeyMixin, OrganizationScopedMixin, TimestampM
 
     __tablename__ = "channel_connections"
     __table_args__ = (
-        UniqueConstraint(
-            "channel_id", "provider", name="uq_channel_connections_channel_provider"
-        ),
+        UniqueConstraint("channel_id", "provider", name="uq_channel_connections_channel_provider"),
     )
 
     channel_id: Mapped[uuid.UUID] = mapped_column(

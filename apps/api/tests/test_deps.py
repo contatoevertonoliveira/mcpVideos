@@ -23,9 +23,7 @@ def test_require_permission_dependency_allows_owner(db_session):
     user_session = AuthService(db_session).get_valid_session(token)
 
     dependency = require_permission(Permission.BILLING_MANAGE)
-    organization_id = dependency(
-        user_session=user_session, organization_id=org.id, db=db_session
-    )
+    organization_id = dependency(user_session=user_session, organization_id=org.id, db=db_session)
 
     assert organization_id == org.id
 

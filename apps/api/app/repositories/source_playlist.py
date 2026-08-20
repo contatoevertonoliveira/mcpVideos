@@ -20,3 +20,16 @@ class SourcePlaylistRepository(TenantScopedRepository[SourcePlaylist]):
             SourcePlaylist.external_playlist_id == external_playlist_id,
         )
         return self.session.scalars(stmt).first()
+
+    def list_by_channel(
+        self, *, channel_id: uuid.UUID, organization_id: uuid.UUID, limit: int = 200
+    ) -> list[SourcePlaylist]:
+        stmt = (
+            select(SourcePlaylist)
+            .where(
+                SourcePlaylist.organization_id == organization_id,
+                SourcePlaylist.channel_id == channel_id,
+            )
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())

@@ -30,3 +30,17 @@ export interface SourceVideoSummary {
   published_at: string | null;
   thumbnail_url: string | null;
 }
+
+export interface ChannelProfileSummary {
+  primary_language: string | null;
+  primary_category: string | null;
+  estimated_audience: string | null;
+  content_summary: string | null;
+  confidence: number;
+  generated_at: string;
+}
+
+export interface ChannelIntelligence {
+  channel_profile: ChannelProfileSummary | null;
+  audience_profile: { confidence: number } | null;
+}

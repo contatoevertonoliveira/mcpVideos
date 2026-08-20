@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getApiInternalUrl } from "@/lib/env";
-import type { ChannelSummary, SourceVideoSummary } from "@/types/channel";
+import type { ChannelIntelligence, ChannelSummary, SourceVideoSummary } from "@/types/channel";
 
 function authHeaders(token: string): HeadersInit {
   return { Authorization: `Bearer ${token}` };
@@ -81,4 +81,27 @@ export async function listChannelVideos(
     return [];
   }
   return (await response.json()) as SourceVideoSummary[];
+}
+
+export async function triggerChannelAnalysis(token: string, channelId: string): Promise<void> {
+  await fetch(`${getApiInternalUrl()}/api/v1/channels/${channelId}/analyze`, {
+    method: "POST",
+    headers: authHeaders(token),
+    cache: "no-store",
+  }).catch(() => undefined);
+}
+
+export async function getChannelIntelligence(
+  token: string,
+  channelId: string,
+): Promise<ChannelIntelligence> {
+  const response = await fetch(`${getApiInternalUrl()}/api/v1/channels/${channelId}/intelligence`, {
+    headers: authHeaders(token),
+    cache: "no-store",
+  }).catch(() => null);
+
+  if (!response || !response.ok) {
+    return { channel_profile: null, audience_profile: null };
+  }
+  return (await response.json()) as ChannelIntelligence;
 }

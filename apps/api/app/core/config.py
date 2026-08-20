@@ -48,6 +48,16 @@ class Settings(BaseSettings):
         default="http://localhost:3000/oauth/youtube/callback", alias="GOOGLE_REDIRECT_URI"
     )
 
+    # Fase 06 - Channel Intelligence (Documento 02 sec. 31, Documento 06 sec. 79)
+    llm_fake_gateway: bool = Field(default=True, alias="LLM_FAKE_GATEWAY")
+    anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
+    # Provisorio: a escolha definitiva de provider/modelo e do Model Router
+    # (Fase 14), que ainda nao existe - este e so o "provider real" minimo
+    # exigido pelo Documento 02 sec. 71 para o LLMGateway ter as duas
+    # implementacoes, ficando pronto porem nao exercitado (usuario optou
+    # por seguir so com FakeLLMGateway por enquanto).
+    llm_model: str = Field(default="claude-sonnet-4-5-20250929", alias="LLM_MODEL")
+
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"
