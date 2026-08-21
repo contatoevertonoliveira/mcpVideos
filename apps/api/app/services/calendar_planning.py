@@ -99,6 +99,10 @@ class CalendarPlanningService:
             publishing_slots=active_slots,
             candidates=candidates,
             existing_calendar_items=existing_items,
+            session=self.session,
+            organization_id=organization_id,
+            channel_id=channel_id,
+            correlation_id=correlation_id,
         )
 
         idea_by_opportunity_id = {str(opportunity.id): idea for opportunity, idea in candidates}

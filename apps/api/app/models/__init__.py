@@ -1,3 +1,7 @@
+from app.models.agent import Agent
+from app.models.agent_prompt import AgentPrompt
+from app.models.agent_run import AgentRun
+from app.models.agent_version import AgentVersion
 from app.models.audience_profile import AudienceProfile
 from app.models.audit_log import AuditLog
 from app.models.brand_profile import BrandProfile
@@ -26,8 +30,17 @@ from app.models.source_video import SourceVideo
 from app.models.source_video_metric import SourceVideoMetric
 from app.models.strategy_rule import StrategyRule
 from app.models.user import User
+from app.models.workflow_definition import WorkflowDefinition
+from app.models.workflow_event import WorkflowEvent
+from app.models.workflow_run import WorkflowRun
+from app.models.workflow_step import WorkflowStep
+from app.models.workflow_version import WorkflowVersion
 
 __all__ = [
+    "Agent",
+    "AgentPrompt",
+    "AgentRun",
+    "AgentVersion",
     "AudienceProfile",
     "AuditLog",
     "BrandProfile",
@@ -56,4 +69,9 @@ __all__ = [
     "StrategyRule",
     "User",
     "UserSession",
+    "WorkflowDefinition",
+    "WorkflowEvent",
+    "WorkflowRun",
+    "WorkflowStep",
+    "WorkflowVersion",
 ]

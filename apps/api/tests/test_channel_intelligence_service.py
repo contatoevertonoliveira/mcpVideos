@@ -6,12 +6,14 @@ from app.agents.schemas import ChannelAnalystOutput
 from app.core.exceptions import DomainError, NotFoundError
 from app.gateways.llm import FakeLLMGateway, LLMGenerationError
 from app.gateways.youtube import FakeYouTubeGateway
-from app.models.enums import AudienceProfileSource, SyncType
+from app.models.enums import AgentRunStatus, AudienceProfileSource, SyncType
+from app.repositories.agent_run import AgentRunRepository
 from app.services.channel_connection import ChannelConnectionService
 from app.services.channel_intelligence import ChannelIntelligenceService
 from app.services.channel_sync import ChannelSyncService
 from app.services.organization import OrganizationService
 from app.services.user import UserService
+from app.services.workflow_engine import WorkflowEngineService
 
 
 def _org_and_user(db_session):
@@ -59,6 +61,29 @@ async def test_analyze_channel_creates_profiles(db_session):
     assert result.audience_profile.source == AudienceProfileSource.INFERRED
     assert result.audience_profile.profile_json["language"] == "pt-BR"
     assert "confidence" not in result.audience_profile.profile_json
+
+
+@pytest.mark.anyio
+async def test_analyze_channel_threads_workflow_run_id_into_agent_runs(db_session):
+    org, user = _org_and_user(db_session)
+    channel = await _connect_and_sync_channel(db_session, org, user)
+    engine = WorkflowEngineService(db_session)
+    version = engine.ensure_definition(
+        slug="test.intelligence", name="Test Intelligence", description="desc", steps=["only"]
+    )
+    workflow_run = engine.start_run(
+        workflow_version=version, organization_id=org.id, channel_id=channel.id
+    )
+
+    await _intelligence_service(db_session).analyze_channel(
+        channel_id=channel.id, organization_id=org.id, workflow_run_id=workflow_run.id
+    )
+
+    runs = AgentRunRepository(db_session).list(organization_id=org.id)
+    channel_and_audience_runs = [run for run in runs if run.channel_id == channel.id]
+    assert len(channel_and_audience_runs) == 2
+    assert all(run.workflow_run_id == workflow_run.id for run in channel_and_audience_runs)
+    assert all(run.status == AgentRunStatus.COMPLETED for run in channel_and_audience_runs)
 
 
 @pytest.mark.anyio

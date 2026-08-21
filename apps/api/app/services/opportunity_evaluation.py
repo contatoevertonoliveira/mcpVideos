@@ -77,6 +77,9 @@ class OpportunityEvaluationService:
             strategy=active_strategy,
             audience_profile_json=audience_profile.profile_json if audience_profile else None,
             latest_metrics_by_video_id=latest_metrics_by_video_id,
+            session=self.session,
+            organization_id=organization_id,
+            channel_id=idea.channel_id,
         )
         result = score_opportunity(evaluation)
 

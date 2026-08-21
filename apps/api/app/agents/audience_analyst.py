@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import uuid
 
+from sqlalchemy.orm import Session
+
 from app.agents.runtime import run_structured_agent
 from app.agents.schemas import AudienceAnalystOutput
 from app.gateways.llm import LLMGateway
@@ -57,6 +59,12 @@ async def run_audience_analyst(
     videos: list[SourceVideo],
     latest_metrics_by_video_id: dict[uuid.UUID, SourceVideoMetric],
     existing_profile: AudienceProfile | None,
+    session: Session,
+    organization_id: uuid.UUID,
+    channel_id: uuid.UUID | None = None,
+    workflow_run_id: uuid.UUID | None = None,
+    workflow_step_id: uuid.UUID | None = None,
+    correlation_id: uuid.UUID | None = None,
 ) -> AudienceAnalystOutput:
     user_prompt = _build_user_prompt(
         channel=channel,
@@ -70,4 +78,10 @@ async def run_audience_analyst(
         version=VERSION,
         user_prompt=user_prompt,
         response_model=AudienceAnalystOutput,
+        session=session,
+        organization_id=organization_id,
+        channel_id=channel_id,
+        workflow_run_id=workflow_run_id,
+        workflow_step_id=workflow_step_id,
+        correlation_id=correlation_id,
     )

@@ -2,7 +2,7 @@
 
 > Mantido conforme Documento 03, seção 133. Atualizar a cada fase que alterar o domínio.
 
-Última atualização: Fase 10 — Content Calendar.
+Última atualização: Fase 11 — Workflow & Agent Engine.
 
 ## ERD
 
@@ -38,6 +38,20 @@ erDiagram
     CHANNEL ||--o{ CALENDAR_RECOMMENDATION : has
     CONTENT_IDEA ||--o{ CALENDAR_ITEM : "scheduled as"
     CALENDAR_RECOMMENDATION ||--o{ CALENDAR_ITEM : "produced (batch)"
+    AGENT ||--o{ AGENT_VERSION : "versioned history"
+    AGENT_PROMPT ||--o{ AGENT_VERSION : "pinned by"
+    AGENT_VERSION ||--o{ AGENT_RUN : executes
+    ORGANIZATION ||--o{ AGENT_RUN : owns
+    CHANNEL ||--o{ AGENT_RUN : "optional context"
+    WORKFLOW_DEFINITION ||--o{ WORKFLOW_VERSION : "versioned history"
+    WORKFLOW_VERSION ||--o{ WORKFLOW_RUN : executes
+    ORGANIZATION ||--o{ WORKFLOW_RUN : owns
+    CHANNEL ||--o{ WORKFLOW_RUN : "optional context"
+    WORKFLOW_RUN ||--o{ WORKFLOW_STEP : has
+    WORKFLOW_RUN ||--o{ WORKFLOW_EVENT : "trace"
+    WORKFLOW_STEP ||--o{ WORKFLOW_EVENT : "trace (optional)"
+    WORKFLOW_RUN ||--o{ AGENT_RUN : "optional context"
+    WORKFLOW_STEP ||--o{ AGENT_RUN : "optional context"
 
     ORGANIZATION {
         uuid id PK
@@ -416,6 +430,124 @@ erDiagram
         uuid generated_by_agent_run_id "sem FK - agent_runs so existe na Fase 11"
         timestamptz created_at
     }
+
+    AGENT {
+        uuid id PK
+        string name
+        string slug UK
+        string category
+        string description "nullable"
+        boolean active
+    }
+
+    AGENT_PROMPT {
+        uuid id PK
+        uuid agent_id FK
+        int version
+        text system_prompt
+        text developer_prompt "nullable"
+        text template "nullable"
+        string checksum "sha256 do system_prompt"
+        timestamptz created_at
+    }
+
+    AGENT_VERSION {
+        uuid id PK
+        uuid agent_id FK
+        int version
+        string provider
+        string model
+        float temperature
+        jsonb settings_json
+        jsonb input_schema_json
+        jsonb output_schema_json
+        uuid prompt_id FK "nullable"
+        enum status "draft|active|deprecated - so uma active por agent"
+        timestamptz created_at
+    }
+
+    AGENT_RUN {
+        uuid id PK
+        uuid organization_id FK
+        uuid agent_version_id FK
+        uuid channel_id FK "nullable"
+        uuid project_id "sem FK - content_projects nao existe ainda"
+        uuid scene_id "sem FK - scenes nao existe ainda"
+        uuid workflow_run_id FK "nullable"
+        uuid workflow_step_id FK "nullable"
+        enum status "pending|running|completed|failed"
+        jsonb input_json
+        jsonb output_json "nullable"
+        timestamptz started_at
+        timestamptz completed_at "nullable"
+        int tokens_input "nullable - nenhum gateway real reporta uso ainda"
+        int tokens_output "nullable"
+        float estimated_cost "nullable"
+        float actual_cost "nullable"
+        string provider_request_id "nullable"
+        uuid correlation_id "nullable"
+        string error_code "nullable"
+        text error_message "nullable"
+    }
+
+    WORKFLOW_DEFINITION {
+        uuid id PK
+        string name
+        string slug UK
+        string description "nullable"
+        boolean active
+    }
+
+    WORKFLOW_VERSION {
+        uuid id PK
+        uuid workflow_definition_id FK
+        int version
+        jsonb definition_json "steps: lista ordenada de step_key"
+        timestamptz created_at
+    }
+
+    WORKFLOW_RUN {
+        uuid id PK
+        uuid organization_id FK
+        uuid workflow_version_id FK
+        uuid channel_id FK "nullable"
+        uuid project_id "sem FK - content_projects nao existe ainda"
+        enum status "pending|running|paused|completed|failed|cancelled|human_review"
+        string current_step "nullable"
+        timestamptz started_at
+        timestamptz completed_at "nullable"
+        uuid correlation_id
+        jsonb input_json
+        jsonb output_json "nullable"
+        string error_code "nullable"
+        text error_message "nullable"
+    }
+
+    WORKFLOW_STEP {
+        uuid id PK
+        uuid organization_id FK
+        uuid workflow_run_id FK
+        string step_key
+        int sequence
+        enum status "pending|running|completed|failed"
+        timestamptz started_at "nullable"
+        timestamptz completed_at "nullable"
+        int attempt_count
+        jsonb input_json "nullable"
+        jsonb output_json "nullable"
+        jsonb error_json "nullable"
+    }
+
+    WORKFLOW_EVENT {
+        uuid id PK
+        uuid organization_id FK
+        uuid workflow_run_id FK
+        uuid workflow_step_id FK "nullable"
+        string event_type
+        jsonb payload_json
+        timestamptz created_at
+        uuid correlation_id "nullable"
+    }
 ```
 
 `FEATURE_FLAG` fica fora do diagrama de relacionamentos porque `scope_id` é polimórfico (aponta para `organizations.id` ou `channels.id` dependendo de `scope_type`, ou é nulo quando `scope_type=global`) — não tem FK fixa de propósito (Documento 03, seção 85).
@@ -436,7 +568,8 @@ erDiagram
 | 08 | `content_strategies`, `content_pillars`, `strategy_rules` | ✅ |
 | 09 | `content_ideas`, `content_opportunities`, `opportunity_scores`, `content_clusters`, `idea_relationships` | ✅ |
 | 10 | `calendar_items`, `publishing_slots`, `calendar_recommendations` | ✅ |
-| 11+ | `agents`, `agent_versions`, `agent_prompts`, `agent_runs`, `content_projects`, `workflow_definitions`, ... | ⏳ |
+| 11 | `agents`, `agent_versions`, `agent_prompts`, `agent_runs`, `workflow_definitions`, `workflow_versions`, `workflow_runs`, `workflow_steps`, `workflow_events` | ✅ |
+| 12+ | `content_projects`, `scenes`, ... | ⏳ |
 
 Ver Documento 03, seções 110-129 para o mapeamento completo fase → entidades. `sessions` não está no Documento 03 (que deixa "sessions/tokens conforme implementação" em aberto — Documento 10 §112) — modelada aqui seguindo os campos exatos do Documento 09 §6 (`session_id`, `user_id`, `created_at`, `expires_at`, `last_seen_at`, `revoked_at`).
 
@@ -523,3 +656,16 @@ Ver Documento 03, seções 110-129 para o mapeamento completo fase → entidades
 - **"Approved Opportunities" (input do Calendar Planner, Documento 05 §12) mapeado para `ContentIdea.status == APPROVED`** (a ação humana da Fase 09, `ContentIdeaService.approve()`) - o Documento 05 foi escrito prevendo um conceito de "oportunidade aprovada" mais amadurecido que este projeto ainda não tem (não existe um `ContentOpportunity.status=APPROVED` distinto); a aproximação mais fiel disponível hoje é a ideia já aprovada pelo usuário, que sempre tem uma `ContentOpportunity` associada (a avaliação que a tornou `RECOMMENDED` antes de ser aprovada).
 - **`calendar_items.project_id` existe como coluna (Documento 03 §27) mas sem FK real** - `content_projects` só é criada na Fase 11 (Documento 03 §120), então esta fase segue o mesmo padrão de "sem FK prematura" já usado em `generated_by_agent_run_id` desde a Fase 07 (a coluna já existe pronta para virar FK real quando a tabela existir, sem exigir backfill).
 - **Sétima task Celery do projeto** (`app/tasks/calendar_planning.py`, nome lógico `calendar.plan`), reusando `mark_running_with_retry`. Como `channel.strategy` (Fase 08), **nunca é auto-disparada** por nenhuma outra fase - depende de o usuário já ter aprovado pelo menos uma ideia, e itens sugeridos precisam de revisão humana antes de qualquer coisa acontecer com eles (Documento 08 §33: itens sugeridos têm aparência visual distinta, "Sugestão IA", até serem revisados).
+
+## Decisões de modelagem (Fase 11)
+
+- **`agents`/`agent_versions`/`agent_prompts` são globais, não escopados por `organization_id`** (Documento 03 §42-44) — um agente e seu histórico de versões/prompts pertencem à plataforma, não a um tenant específico; só `agent_runs` (a *execução* de um agente) é escopado por organização, como qualquer outro recurso privado.
+- **`agent_prompts.checksum` (SHA-256 do `system_prompt`) é o que decide se uma nova `AgentVersion` é necessária.** `AgentRegistryService.ensure_current_version()` roda a cada chamada de agente (auto-seedante): se o checksum bate com o da versão ACTIVE atual, reaproveita; se mudou (o arquivo `.md` do prompt foi editado), cria uma nova `AgentVersion`+`AgentPrompt` e deprecia a anterior — nunca sobrescreve uma versão existente (CLAUDE.md: "nunca alterar versão existente silenciosamente"). Prompts em arquivo (`app/agents/prompts/<agent>/v<N>.md`, desde a Fase 06) continuam a fonte canônica de autoria; estas tabelas só adicionam uma camada de persistência/versionamento por cima.
+- **Mesmo índice "uma ACTIVE por agente/canal" com flush separado** já usado em `ChannelDNAVersion` (Fase 07) e `ContentStrategy` (Fase 08) — reaplicado aqui para `AgentVersion.status`.
+- **`agent_runs.tokens_input`/`tokens_output`/`estimated_cost`/`actual_cost` ficam `NULL`** — nenhum gateway real (`AnthropicLLMGateway`) está configurado com credenciais nesta sessão, e o `FakeLLMGateway` não simula uso de tokens; preencher esses campos agora seria fabricar dado (CLAUDE.md: sem placeholders enganosos). As colunas já existem prontas para quando o Model Router (Fase 14) trouxer contabilização real de custo.
+- **`agent_runs.project_id`/`scene_id` sem FK real** — mesmo padrão de "sem FK prematura" já usado em `calendar_items.project_id` (Fase 10) e `generated_by_agent_run_id` (Fase 07): `content_projects`/`scenes` só existem a partir da Fase 12.
+- **`workflow_definitions`/`workflow_versions` também são globais**, mesmo raciocínio de `agents`/`agent_versions` — só `workflow_runs` (a execução) é escopado por organização. `WorkflowVersion.definition_json` guarda `{"steps": [...]}`, uma lista ordenada de `step_key`; `WorkflowEngineService.ensure_definition()` é auto-seedante e versiona por mudança de conteúdo, mesmo padrão do Agent Registry.
+- **`workflow_steps.sequence` modela só cadeias lineares** (Documento 03 §46-50) — não há suporte a fan-out/branching neste motor. Por isso a cadeia `idea.generation → N×opportunity.evaluation` (Fase 09, 1-para-N) continua fora do Workflow Engine, como uma chain Celery avulsa; só a cadeia `channel.onboarding` (sync→intelligence→dna, estritamente linear) foi migrada para cá.
+- **`workflow_events` é append-only, a trilha de auditoria completa de um `WorkflowRun`** — toda transição de estado (`workflow.started`/`step.started`/`step.completed`/`step.failed`/`workflow.completed`/`workflow.failed`/`workflow.resumed`) grava uma linha, carregando o `correlation_id` do run inteiro. É o mecanismo que resolve o critério de aceite "trace operation" do Documento 10 F11: dado um `correlation_id`, dá para reconstruir a timeline completa de um workflow e todos os `agent_runs` que ele disparou.
+- **`agent_runs.workflow_run_id`/`workflow_step_id` são opcionais** — só populados quando a chamada ao agente aconteceu dentro de um workflow rastreado (hoje, só a cadeia `channel.onboarding`). Chamadas manuais (ex.: `POST /channels/{id}/analyze` fora de um workflow) continuam gravando `agent_runs` normalmente, só sem essa ligação. **Bug real corrigido nesta fase**: os services (`ChannelIntelligenceService`, `ChannelDNAService`) recebiam `workflow_run_id` mas não o repassavam para as chamadas de agente — corrigido, com teste de regressão em ambos.
+- **Nenhuma tabela nova para "custo do workflow"** — `WorkflowRun`/`WorkflowStep` não têm campos de custo agregado; isso seria duplicar o que já fica em cada `AgentRun.estimated_cost`/`actual_cost` (hoje `NULL`) e antecipar o Budget/Cost Controller (Fase 14/Documento 09).

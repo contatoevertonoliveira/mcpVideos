@@ -2,15 +2,15 @@
 
 > Este arquivo é o ponto de retomada entre sessões/chats. Sempre ler antes de continuar o trabalho. Sempre atualizar ao final de uma sessão relevante ou fase concluída.
 
-Última atualização: 2026-08-20
+Última atualização: 2026-08-21
 
 ---
 
 ## 1. Status Geral
 
-**Fase atual:** ✅ **Fase 10 — Content Calendar** (seção 4.11), **retrofit de Ideias/Calendário para o Documento 08B** (seção 4.12), **reconstrução do Dashboard/AppShell** (seção 4.13) e **ajuste de tokens + troca de fonte + correção de um bug real de fonte** (seção 4.14) — todos implementados e validados nesta sessão, prestes a ser commitados a pedido do usuário. Fase 09 foi commitada (`3f6bcb4`) antes de iniciar a Fase 10. Fases 01-09 + retrofit visual (Documento 08A) 100% validados e commitados (seções 4.1-4.10).
+**Fase atual:** ✅ **Fase 11 — Workflow & Agent Engine** (seção 4.15) implementada e validada nesta sessão, prestes a ser commitada a pedido do usuário. Fase 10 + retrofit Documento 08B (Ideias/Calendário/Dashboard/AppShell/tokens/fonte) já commitados (`4958fe1`) antes desta sessão. Fases 01-10 + retrofits visuais (Documentos 08A/08B) 100% validados e commitados (seções 4.1-4.14).
 
-**Próximo passo:** commit/push desta sessão (Fase 10 + retrofit 08B + skin refactor + fix de fonte) concluído; depois decidir entre iniciar a **Fase 11 — Workflow & Agent Engine** ou continuar aprofundando o refinamento visual (Login/Registro/Canais ainda não passaram por uma rodada específica do Documento 08B).
+**Próximo passo:** commit/push da Fase 11 pendente de confirmação do usuário; depois decidir entre iniciar a **Fase 12 — Script & Storyboard Engine** ou continuar aprofundando o refinamento visual (Login/Registro/Canais ainda não passaram por uma rodada específica do Documento 08B).
 
 ---
 
@@ -74,7 +74,7 @@ MACROETAPA E — OPTIMIZATION & AUTONOMY
 20 Autopilot, Billing & Control Center
 ```
 
-Nenhuma fase foi iniciada.
+Fases 01-10 concluídas e commitadas; Fase 11 implementada e validada nesta sessão (ver seção 1).
 
 ---
 
@@ -588,9 +588,47 @@ docker compose stop web && docker compose rm -f web && docker compose up -d --bu
 # no navegador: abrir DevTools > Console, checar getComputedStyle(document.body).fontFamily
 ```
 
+### 4.15 Fase 11 — Workflow & Agent Engine — Relatório de Conclusão
+
+**Implementado:**
+- **Agent Registry** (Documento 02 §28; Documento 03 §42-44; Documento 05 "Agent Registry versionado"): 3 entidades novas globais/quase-globais — `agents` (catálogo, `slug` único), `agent_versions` (provider/model/temperature/settings pinados, `status` DRAFT/ACTIVE/DEPRECATED, só uma ACTIVE por agente — mesmo padrão de "flush separado antes de inserir" já usado desde `ChannelDNAVersion`), `agent_prompts` (texto do prompt endereçado por checksum SHA-256). `AgentRegistryService.ensure_current_version()` é auto-seedante e idempotente: a primeira chamada de qualquer agente o registra sozinho; chamadas seguintes reaproveitam a mesma versão a não ser que o conteúdo do arquivo de prompt em `app/agents/prompts/<agent>/v<N>.md` tenha mudado de fato (checksum diferente), caso em que uma nova versão é criada — nunca alterando a existente (CLAUDE.md).
+- **`agent_runs`** (Documento 03 §44-45): uma linha por chamada estruturada a um agente — `status` PENDING/RUNNING/COMPLETED/FAILED, `input_json`/`output_json`, `workflow_run_id`/`workflow_step_id` opcionais (liga a chamada a um workflow, quando existir), `correlation_id`, `tokens_input`/`tokens_output`/`estimated_cost`/`actual_cost` deixados `NULL` (nenhum gateway real reporta uso ainda — não fabricado).
+- **`app/agents/runtime.py` (`run_structured_agent`) reescrito**: agora exige `session`/`organization_id` e cria uma `AgentRun` (RUNNING) antes de chamar o gateway, marcando COMPLETED (com `output_json`) ou FAILED (com `error_message`) ao final — os critérios de aceite literais "execute versioned agent", "record run" e "trace operation" do Documento 10 F11. Os 6 agentes existentes (`channel_analyst`, `audience_analyst`, `strategy_agent`, `idea_agent`, `opportunity_evaluator`, `calendar_planner`) e os 6 services que os chamam foram atualizados para passar `session`/`organization_id`/`channel_id`/`workflow_run_id`/`correlation_id` através da cadeia.
+- **Workflow Engine** (Documento 02 §25-27; Documento 03 §46-50; Documento 04): 5 entidades novas — `workflow_definitions`/`workflow_versions` (mesmo padrão auto-seedante/versionado do Agent Registry — `WorkflowVersion.definition_json = {"steps": [...]}`), `workflow_runs`/`workflow_steps` (execução linear passo-a-passo, cada `WorkflowStep` com `sequence`/`status`/`attempt_count`), `workflow_events` (trilha de auditoria de toda transição, carregando o `correlation_id` do run). `WorkflowEngineService`: `ensure_definition` (auto-seedante), `start_run` (cria o run RUNNING + uma `WorkflowStep` PENDING por passo + evento `workflow.started`), `mark_step_running`/`mark_step_completed` (avança para o próximo passo PENDING ou completa o run inteiro se não houver mais passos), `mark_step_failed` (falha o passo E o run, evento `workflow.failed`), `resume` (critério de aceite literal "resume" — só permitido em run FAILED/PAUSED, levanta `DomainError(code="WORKFLOW_NOT_RESUMABLE")` caso contrário).
+- **Migração da cadeia `channel.onboarding` (sync→intelligence→dna) para o Workflow Engine**: as 3 tasks Celery existentes (`channel_sync`/`channel_intelligence`/`channel_dna`) ganharam um `workflow_run_id` opcional, chamando `mark_step_running`/`mark_step_completed`/`mark_step_failed` ao redor do trabalho já existente — as condições de disparo originais (`sync_type == INITIAL and video_rows`; `get_latest_version_number == 0`) foram preservadas exatamente, só passando `workflow_run_id` adiante (decisão deliberada de minimizar risco de regressão numa fase que toca quase todos os agentes/services do projeto). Novo `app/tasks/channel_onboarding.py` (`dispatch_channel_onboarding`, sem `@celery_app.task` próprio) registra o workflow `"channel.onboarding"` (`steps=["sync","intelligence","dna"]`) e inicia o run antes de disparar o primeiro passo. `ChannelConnectionService.complete_connection()`: canal novo agora dispara `dispatch_channel_onboarding()` em vez de `dispatch_channel_sync()` direto; reconexão continua no caminho antigo (`INCREMENTAL`, nunca disparava a cadeia mesmo antes).
+- **Decisão de escopo**: só `channel.onboarding` foi migrado — é a única cadeia linear multi-etapa já existente. `idea.generation`'s fan-out (1 ideia → N avaliações de oportunidade) não cabe no modelo linear de `WorkflowStep.sequence` do Documento 03, então continua uma chain Celery avulsa, intocada. `channel.strategy`/`idea.generation`/`calendar.plan` continuam ações manuais de um único passo (nunca uma cadeia de múltiplas etapas), então não foram envolvidas no Workflow Engine.
+- **Bug real encontrado e corrigido durante a validação E2E**: `ChannelIntelligenceService.analyze_channel()` e `ChannelDNAService.generate_new_version()` recebiam `workflow_run_id` mas não o repassavam para as chamadas de `run_channel_analyst`/`run_audience_analyst` — o `AgentRun` das etapas "intelligence" e "dna" era criado corretamente (COMPLETED, com dados reais) mas com `workflow_run_id` sempre `NULL`, quebrando silenciosamente o critério de aceite "trace operation" (não dava para correlacionar um `AgentRun` ao `WorkflowRun` que o originou). Corrigido nos dois services e propagado através de `channel_dna.py` (task + `dispatch_channel_dna`); `generate_new_version()` ganhou o parâmetro `workflow_run_id` que não existia antes. Só foi percebido porque a validação E2E consultou o banco diretamente (`SELECT ... FROM agent_runs WHERE workflow_run_id = ...`) em vez de só checar os logs do worker/status HTTP — os testes automatizados sozinhos não teriam pego isso (usavam `uuid.uuid4()` solto antes de eu corrigir os testes para usar um `WorkflowRun` real, o que também expôs a FK constraint funcionando corretamente).
+- Migration `cc4e8f58bdea` (9 tabelas novas: `agents`, `agent_versions`, `agent_prompts`, `agent_runs`, `workflow_definitions`, `workflow_versions`, `workflow_runs`, `workflow_steps`, `workflow_events`).
+- **Sem endpoints HTTP novos** (decisão de escopo deliberada) — os critérios de aceite da Fase 11 no Documento 10 são capacidades de backend (executar/versionar/rastrear), não uma tela nova; consultar `agent_runs`/`workflow_runs` fica para quando uma tela realmente precisar (ex.: um futuro painel de observabilidade).
+
+**Validado nesta sessão:**
+- 203 testes de backend (pytest) contra Postgres+Redis reais, incluindo 18 novos: `test_agent_registry.py` (cria/reaproveita/versiona por checksum, deprecia a versão anterior corretamente), `test_workflow_engine.py` (ensure_definition idempotente e versionado por mudança de steps, start_run cria steps PENDING + evento, mark_step_completed avança e completa o run no último passo, mark_step_failed falha step+run, resume reseta e rejeita run não-resumível), `test_agent_runtime.py` (`run_structured_agent` grava `AgentRun` COMPLETED/FAILED corretamente, reaproveita a mesma `AgentVersion` entre chamadas), extensões em `test_channel_connection_service.py` (canal novo inicia `WorkflowRun` RUNNING, reconexão não inicia outro), `test_channel_intelligence_service.py`/`test_channel_dna_service.py` (workflow_run_id chega de fato nos `AgentRun` das etapas intelligence/dna — teste que teria pego o bug acima, escrito depois de corrigi-lo). `ruff`/`mypy` limpos (176 arquivos).
+- Migration validada com ciclo `upgrade → downgrade → upgrade` no banco de dev e aplicada ao banco de teste (`mcp_videos_test`).
+- **Cadeia completa validada via `curl` contra a stack Docker real**: registro → conectar canal novo → worker processou `channel.sync`→`channel.intelligence`→`channel.dna` em sequência (confirmado nos logs). Consulta direta ao Postgres confirmou: `workflow_runs.status = COMPLETED`, os 3 `workflow_steps` (sync/intelligence/dna) todos COMPLETED em ordem com `attempt_count=1`, os 8 `workflow_events` na ordem esperada (`workflow.started` → 3×`step.started`/`step.completed` → `workflow.completed`), e os 4 `agent_runs` (2× `channel_analyst`, 2× `audience_analyst` — um par por etapa intelligence/dna) todos COMPLETED com `workflow_run_id` corretamente preenchido após a correção do bug acima.
+- **Nota operacional**: o container `worker` (diferente do `api`, que roda `uvicorn --reload`) não recarrega código automaticamente sobre o bind mount — precisou de `docker compose restart worker` duas vezes nesta sessão (uma após o código inicial da Fase 11, outra após a correção do bug de `workflow_run_id`) para o Celery pegar os módulos atualizados. Um `WorkflowRun` órfão ficou preso em `RUNNING`/`current_step=sync` no banco de dev como efeito colateral de uma tentativa de conexão contra o worker desatualizado (a task falhou com `TypeError` antes de chamar `mark_step_failed`) — é só um artefato de teste local, não um bug de produto; não foi limpo pois não afeta nenhum outro dado.
+- Caminhos manuais antigos (`POST /channels/{id}/sync|analyze|dna/generate` sem `workflow_run_id`) confirmados sem regressão pela suíte completa (`test_channels_endpoints.py`, inalterado nesta fase, continua passando).
+
+**Pendências / Known Limitations:**
+- Nenhum endpoint HTTP para consultar `agent_runs`/`workflow_runs`/`workflow_events` (decisão de escopo — ver acima).
+- `docs/database.md` atualizado com as 9 entidades novas (Agent Registry + Workflow Engine) no ERD e as decisões desta fase.
+- O `WorkflowRun` órfão de teste mencionado acima permanece no banco de dev (não afeta produção nem os testes automatizados, que rodam contra `mcp_videos_test`).
+
+**Como validar:**
+```bash
+cd apps/api && ruff check . && mypy app
+docker compose exec -e TEST_DATABASE_URL="postgresql+psycopg2://postgres:postgres@postgres:5432/mcp_videos_test" \
+  -e TEST_REDIS_URL="redis://redis:6379/15" api pytest -q
+# E2E: registrar usuário, POST /channels/connect, POST /channels/callback
+# com um canal novo, depois checar no Postgres:
+#   SELECT status FROM workflow_runs ORDER BY started_at DESC LIMIT 1;
+#   SELECT step_key, status FROM workflow_steps WHERE workflow_run_id = '<id>';
+#   SELECT workflow_run_id FROM agent_runs WHERE channel_id = '<channel_id>';
+# (lembrar de "docker compose restart worker" se o código do worker mudou)
+```
+
 ## 5. Pendências / Perguntas em Aberto
 
-- Fases 01-09 + retrofit visual (Documento 08A) commitados e enviados para `main` (`b3041ae`, `ed9b437`, `7b54b9c`, `4e5ecdc`, `7675039`, `ecf72cd`, `b518bf6`, `6f37fe6`, `d402cdb`, `3f6bcb4`). **Fase 10 + retrofit de Ideias/Calendário/Dashboard (Documento 08B) + fix de fonte commitados nesta sessão** — hash a registrar na próxima atualização deste arquivo.
+- Fases 01-10 + retrofits visuais (Documentos 08A/08B) commitados e enviados para `main` (`b3041ae`, `ed9b437`, `7b54b9c`, `4e5ecdc`, `7675039`, `ecf72cd`, `b518bf6`, `6f37fe6`, `d402cdb`, `3f6bcb4`, `4958fe1`). **Fase 11 — Workflow & Agent Engine implementada e validada nesta sessão, commit pendente de confirmação do usuário.**
 - Documento 10 (seção 137) sugere organizar os documentos em `/docs/master/` com slugs (`01-product-brief.md`, etc.) — não feito; usuário optou implicitamente por manter o padrão atual `Documento NN - Titulo.md` ao pedir para seguir direto para a Fase 01.
 - Ainda não definido: nome comercial do produto, provedor de IA/mídia real a integrar primeiro na Fase 13 (Documento 10 §71 pede benchmark atualizado antes de decidir — não assumir Higgsfield/Kie/fal.ai/WaveSpeed/Replicate como escolha final), moeda/plano de billing. Documento 08B §73 sugere "Creator OS" como placeholder visual interno, não como nome comercial definitivo.
 - Credenciais reais do Google Cloud (`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`) ainda não configuradas — usuário optou por seguir só com `FakeYouTubeGateway` por enquanto (Fase 04). `GoogleYouTubeGateway` está implementada e pronta (incluindo os métodos de import da Fase 05), mas nunca exercitada contra o Google real.
@@ -732,6 +770,15 @@ docker compose stop web && docker compose rm -f web && docker compose up -d --bu
 - Usuário pediu para trocar a fonte padrão para **Poppins**. Ao investigar por que a fonte "ainda parecia antiga" mesmo após o container recriado, encontrado um bug real pré-existente: `--font-sans: var(--font-sans);` em `globals.css` era uma custom property autorreferente (inválida), então nenhuma fonte customizada (nem Geist, desde o retrofit do Documento 08A) jamais tinha renderizado de fato. Corrigido, e confirmado via `getComputedStyle` no navegador real que Poppins agora resolve corretamente.
 - Aproveitada a rodada para escurecer a paleta dark, remover bordas visíveis dos `Card`s (shadow em vez de ring), simplificar o score do `OpportunityCard`, dar um gradiente real ao "AI Magic", e aumentar o peso da tipografia — tudo documentado na seção 4.14.
 - Usuário pediu para commitar e enviar tudo.
+
+### 2026-08-21 — Fase 11 — Workflow & Agent Engine (sessão seguinte)
+- Usuário pediu para seguir para a próxima fase ("proxima fase").
+- Implementados o Agent Registry (`agents`/`agent_versions`/`agent_prompts`, auto-seedante e versionado por checksum do prompt) e o Workflow Engine genérico (`workflow_definitions`/`workflow_versions`/`workflow_runs`/`workflow_steps`/`workflow_events`), com `agent_runs` gravando toda chamada estruturada a um agente (COMPLETED/FAILED, `output_json`, ligação opcional a um `workflow_run_id`).
+- A cadeia `channel.onboarding` (sync→intelligence→dna) foi migrada para rodar sobre o Workflow Engine, preservando exatamente as condições de disparo originais — só adicionando rastreamento por cima, sem mudar quando cada etapa dispara.
+- Migration `cc4e8f58bdea` gerada, revisada e aplicada (dev + teste) com ciclo `upgrade → downgrade → upgrade`. `ruff`/`mypy` limpos. 18 testes novos escritos (`test_agent_registry.py`, `test_workflow_engine.py`, `test_agent_runtime.py`, extensões em 3 arquivos existentes) — 203 testes de backend passando no total.
+- **Bug real encontrado durante a validação E2E via `curl` + consulta direta ao Postgres**: `workflow_run_id` não estava chegando aos `agent_runs` das etapas "intelligence"/"dna" (os services recebiam o parâmetro mas não o repassavam para os agentes) — quebrava silenciosamente o critério de aceite "trace operation". Corrigido em `ChannelIntelligenceService`/`ChannelDNAService`, com um teste novo em cada arquivo para prevenir regressão. Notado que os testes automatizados sozinhos não teriam pego isso na primeira versão (usavam um UUID solto em vez de um `WorkflowRun` real) — só a consulta direta ao banco durante o E2E revelou o problema.
+- **Nota operacional nova**: diferente do container `api` (uvicorn `--reload`), o `worker` do Celery não recarrega código sozinho sobre o bind mount — precisa de `docker compose restart worker` explícito após qualquer mudança de código do lado do worker, ou as tasks continuam rodando a versão antiga em memória (foi exatamente isso que causou um `TypeError` na primeira tentativa de validação E2E desta sessão).
+- Próximo passo: usuário decide se commita/envia a Fase 11 agora, e depois se seguimos para a Fase 12 — Script & Storyboard Engine.
 
 ---
 

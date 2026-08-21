@@ -54,7 +54,11 @@ class ChannelIntelligenceService:
         self.audit = AuditService(session)
 
     async def analyze_channel(
-        self, *, channel_id: uuid.UUID, organization_id: uuid.UUID
+        self,
+        *,
+        channel_id: uuid.UUID,
+        organization_id: uuid.UUID,
+        workflow_run_id: uuid.UUID | None = None,
     ) -> ChannelIntelligenceResult:
         channel = self.channels.get_by_id(channel_id, organization_id=organization_id)
         if channel is None:
@@ -89,6 +93,10 @@ class ChannelIntelligenceService:
             videos=videos,
             playlists=playlists,
             existing_profile=existing_channel_profile,
+            session=self.session,
+            organization_id=organization_id,
+            channel_id=channel_id,
+            workflow_run_id=workflow_run_id,
         )
         audience_analysis = await run_audience_analyst(
             self.llm_gateway,
@@ -96,6 +104,10 @@ class ChannelIntelligenceService:
             videos=videos,
             latest_metrics_by_video_id=latest_metrics_by_video_id,
             existing_profile=existing_audience_profile,
+            session=self.session,
+            organization_id=organization_id,
+            channel_id=channel_id,
+            workflow_run_id=workflow_run_id,
         )
 
         channel_profile = self._persist_channel_profile(
@@ -137,7 +149,10 @@ class ChannelIntelligenceService:
             == 0
         ):
             dispatch_channel_dna(
-                self.session, channel_id=channel_id, organization_id=organization_id
+                self.session,
+                channel_id=channel_id,
+                organization_id=organization_id,
+                workflow_run_id=workflow_run_id,
             )
 
         return ChannelIntelligenceResult(

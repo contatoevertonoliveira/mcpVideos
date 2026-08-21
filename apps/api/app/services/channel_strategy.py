@@ -75,6 +75,10 @@ class ChannelStrategyService:
             audience_profile_json=audience_profile.profile_json if audience_profile else None,
             existing_strategy=existing_strategy,
             active_rules=active_rules,
+            session=self.session,
+            organization_id=organization_id,
+            channel_id=channel_id,
+            correlation_id=correlation_id,
         )
 
         next_version = (

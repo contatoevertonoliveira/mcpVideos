@@ -29,6 +29,7 @@ from app.repositories.organization_member import OrganizationMemberRepository
 from app.security.encryption import decrypt_token, encrypt_token
 from app.security.signed_state import InvalidStateError, create_state, verify_state
 from app.services.audit import AuditService
+from app.tasks.channel_onboarding import dispatch_channel_onboarding
 from app.tasks.channel_sync import dispatch_channel_sync
 
 STATE_MAX_AGE_SECONDS = 600
@@ -158,14 +159,22 @@ class ChannelConnectionService:
         )
 
         # Documento 10, Fase 05: "Conectar canal dispara import." First
-        # connection imports everything (INITIAL); reconnecting an already
-        # imported channel only needs to catch up (INCREMENTAL).
-        dispatch_channel_sync(
-            self.session,
-            channel_id=channel.id,
-            organization_id=organization_id,
-            sync_type=SyncType.INITIAL if is_new_channel else SyncType.INCREMENTAL,
-        )
+        # connection imports everything and runs the full "channel.
+        # onboarding" workflow (Fase 11: sync -> intelligence -> dna,
+        # tracked end-to-end via WorkflowRun); reconnecting an already
+        # imported channel only needs to catch up (INCREMENTAL) and never
+        # triggers the onboarding chain (same condition as before Fase 11).
+        if is_new_channel:
+            dispatch_channel_onboarding(
+                self.session, channel_id=channel.id, organization_id=organization_id
+            )
+        else:
+            dispatch_channel_sync(
+                self.session,
+                channel_id=channel.id,
+                organization_id=organization_id,
+                sync_type=SyncType.INCREMENTAL,
+            )
         return channel
 
     async def disconnect(self, *, channel_id: uuid.UUID, organization_id: uuid.UUID) -> Channel:

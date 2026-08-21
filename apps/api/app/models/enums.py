@@ -253,3 +253,45 @@ class DayOfWeek(StrEnum):
     FRIDAY = "friday"
     SATURDAY = "saturday"
     SUNDAY = "sunday"
+
+
+class AgentVersionStatus(StrEnum):
+    """Documento 03, secao 43. Only one ACTIVE version per agent at a
+    time - CLAUDE.md: "nunca alterar versao existente silenciosamente".
+    A content change to a prompt file mints a new version instead of
+    mutating the active one (see AgentRegistryService)."""
+
+    DRAFT = "draft"
+    ACTIVE = "active"
+    DEPRECATED = "deprecated"
+
+
+class AgentRunStatus(StrEnum):
+    """Documento 03, secao 45."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class WorkflowRunStatus(StrEnum):
+    """Documento 03, secao 48 - exact literal status list from the doc."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    HUMAN_REVIEW = "human_review"
+
+
+class WorkflowStepStatus(StrEnum):
+    """Documento 03, secao 49 (not explicitly enumerated - mirrors
+    WorkflowRunStatus's reachable subset for a single step)."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"

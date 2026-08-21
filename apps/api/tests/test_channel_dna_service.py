@@ -5,7 +5,8 @@ import pytest
 from app.core.exceptions import DomainError, NotFoundError
 from app.gateways.llm import FakeLLMGateway
 from app.gateways.youtube import FakeYouTubeGateway
-from app.models.enums import ChannelDNAStatus, SyncType
+from app.models.enums import AgentRunStatus, ChannelDNAStatus, SyncType
+from app.repositories.agent_run import AgentRunRepository
 from app.schemas.brand_profile import BrandProfileWrite
 from app.services.brand_profile import BrandProfileService
 from app.services.channel_connection import ChannelConnectionService
@@ -13,6 +14,7 @@ from app.services.channel_dna import ChannelDNAService
 from app.services.channel_sync import ChannelSyncService
 from app.services.organization import OrganizationService
 from app.services.user import UserService
+from app.services.workflow_engine import WorkflowEngineService
 
 
 def _org_and_user(db_session):
@@ -57,6 +59,29 @@ async def test_generate_new_version_creates_active_dna(db_session):
     assert dna.content_patterns_json["content_patterns"]
     assert dna.recommendations_json == {}
     assert 0.0 <= dna.confidence <= 1.0
+
+
+@pytest.mark.anyio
+async def test_generate_new_version_threads_workflow_run_id_into_agent_runs(db_session):
+    org, user = _org_and_user(db_session)
+    channel = await _connect_and_sync_channel(db_session, org, user)
+    engine = WorkflowEngineService(db_session)
+    version = engine.ensure_definition(
+        slug="test.dna", name="Test DNA", description="desc", steps=["only"]
+    )
+    workflow_run = engine.start_run(
+        workflow_version=version, organization_id=org.id, channel_id=channel.id
+    )
+
+    await _dna_service(db_session).generate_new_version(
+        channel_id=channel.id, organization_id=org.id, workflow_run_id=workflow_run.id
+    )
+
+    runs = AgentRunRepository(db_session).list(organization_id=org.id)
+    channel_and_audience_runs = [run for run in runs if run.channel_id == channel.id]
+    assert len(channel_and_audience_runs) == 2
+    assert all(run.workflow_run_id == workflow_run.id for run in channel_and_audience_runs)
+    assert all(run.status == AgentRunStatus.COMPLETED for run in channel_and_audience_runs)
 
 
 @pytest.mark.anyio

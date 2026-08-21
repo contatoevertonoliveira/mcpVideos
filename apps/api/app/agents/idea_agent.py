@@ -11,6 +11,9 @@ inputs from not-yet-implemented phases.
 from __future__ import annotations
 
 import json
+import uuid
+
+from sqlalchemy.orm import Session
 
 from app.agents.runtime import run_structured_agent
 from app.agents.schemas import IdeaAgentOutput
@@ -61,6 +64,12 @@ async def run_idea_agent(
     strategy: ContentStrategy,
     recent_videos: list[SourceVideo],
     existing_idea_titles: list[str],
+    session: Session,
+    organization_id: uuid.UUID,
+    channel_id: uuid.UUID | None = None,
+    workflow_run_id: uuid.UUID | None = None,
+    workflow_step_id: uuid.UUID | None = None,
+    correlation_id: uuid.UUID | None = None,
 ) -> IdeaAgentOutput:
     user_prompt = _build_user_prompt(
         dna=dna,
@@ -75,4 +84,10 @@ async def run_idea_agent(
         version=VERSION,
         user_prompt=user_prompt,
         response_model=IdeaAgentOutput,
+        session=session,
+        organization_id=organization_id,
+        channel_id=channel_id,
+        workflow_run_id=workflow_run_id,
+        workflow_step_id=workflow_step_id,
+        correlation_id=correlation_id,
     )

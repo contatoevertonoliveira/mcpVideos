@@ -111,6 +111,9 @@ class IdeaGenerationService:
             strategy=active_strategy,
             recent_videos=recent_videos,
             existing_idea_titles=[idea.title for idea in existing_ideas],
+            session=self.session,
+            organization_id=organization_id,
+            channel_id=channel_id,
         )
 
         created: list[ContentIdea] = []

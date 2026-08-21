@@ -49,6 +49,7 @@ class ChannelDNAService:
         channel_id: uuid.UUID,
         organization_id: uuid.UUID,
         correlation_id: uuid.UUID | None = None,
+        workflow_run_id: uuid.UUID | None = None,
     ) -> ChannelDNAVersion:
         channel = self.channels.get_by_id(channel_id, organization_id=organization_id)
         if channel is None:
@@ -79,6 +80,11 @@ class ChannelDNAService:
             videos=videos,
             playlists=playlists,
             existing_profile=None,
+            session=self.session,
+            organization_id=organization_id,
+            channel_id=channel_id,
+            correlation_id=correlation_id,
+            workflow_run_id=workflow_run_id,
         )
         audience_analysis = await run_audience_analyst(
             self.llm_gateway,
@@ -86,6 +92,11 @@ class ChannelDNAService:
             videos=videos,
             latest_metrics_by_video_id=latest_metrics_by_video_id,
             existing_profile=None,
+            session=self.session,
+            organization_id=organization_id,
+            channel_id=channel_id,
+            correlation_id=correlation_id,
+            workflow_run_id=workflow_run_id,
         )
 
         next_version = (

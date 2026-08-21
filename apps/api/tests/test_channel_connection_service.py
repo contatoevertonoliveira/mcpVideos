@@ -4,8 +4,9 @@ import pytest
 
 from app.core.exceptions import AuthorizationError, DomainError
 from app.gateways.youtube import FakeYouTubeGateway
-from app.models.enums import ChannelConnectionStatus
+from app.models.enums import ChannelConnectionStatus, WorkflowRunStatus
 from app.repositories.channel_sync_run import ChannelSyncRunRepository
+from app.repositories.workflow_run import WorkflowRunRepository
 from app.services.channel_connection import ChannelConnectionService
 from app.services.organization import OrganizationService
 from app.services.user import UserService
@@ -118,6 +119,42 @@ async def test_reconnecting_same_channel_updates_instead_of_duplicating(db_sessi
     assert len(sync_runs) == 2
     assert sync_runs[1].items_created == 0
     assert sync_runs[1].items_updated == 1
+
+
+@pytest.mark.anyio
+async def test_new_channel_connect_starts_onboarding_workflow(db_session):
+    org, user = _org_and_user(db_session)
+    service = _service(db_session)
+    url = service.start_connection(organization_id=org.id, user_id=user.id)
+
+    channel = await service.complete_connection(
+        code="fake-code", state=url.split("state=")[1], authenticated_user_id=user.id
+    )
+
+    runs = WorkflowRunRepository(db_session).list(organization_id=org.id)
+    assert len(runs) == 1
+    assert runs[0].channel_id == channel.id
+    assert runs[0].status == WorkflowRunStatus.RUNNING
+    assert runs[0].current_step == "sync"
+
+
+@pytest.mark.anyio
+async def test_reconnecting_channel_does_not_start_new_onboarding_workflow(db_session):
+    org, user = _org_and_user(db_session)
+    service = _service(db_session)
+
+    url1 = service.start_connection(organization_id=org.id, user_id=user.id)
+    await service.complete_connection(
+        code="same-code", state=url1.split("state=")[1], authenticated_user_id=user.id
+    )
+
+    url2 = service.start_connection(organization_id=org.id, user_id=user.id)
+    await service.complete_connection(
+        code="same-code", state=url2.split("state=")[1], authenticated_user_id=user.id
+    )
+
+    runs = WorkflowRunRepository(db_session).list(organization_id=org.id)
+    assert len(runs) == 1
 
 
 @pytest.mark.anyio

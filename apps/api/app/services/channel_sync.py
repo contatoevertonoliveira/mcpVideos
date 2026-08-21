@@ -68,6 +68,7 @@ class ChannelSyncService:
         organization_id: uuid.UUID,
         sync_type: SyncType,
         correlation_id: uuid.UUID | None = None,
+        workflow_run_id: uuid.UUID | None = None,
     ) -> ChannelSyncRun:
         channel = self.channels.get_by_id(channel_id, organization_id=organization_id)
         if channel is None:
@@ -143,7 +144,10 @@ class ChannelSyncService:
             # that's a manual "Analisar novamente" action instead.
             if sync_type == SyncType.INITIAL and video_rows:
                 dispatch_channel_intelligence(
-                    self.session, channel_id=channel_id, organization_id=organization_id
+                    self.session,
+                    channel_id=channel_id,
+                    organization_id=organization_id,
+                    workflow_run_id=workflow_run_id,
                 )
             return run
         except Exception as exc:
