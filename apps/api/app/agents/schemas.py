@@ -96,3 +96,24 @@ class OpportunityEvaluatorOutput(BaseModel):
     strategic_fit: float
     confidence: float
     reasoning_summary: str = ""
+
+
+class CalendarRecommendedItem(BaseModel):
+    """Documento 05, secao 12."""
+
+    opportunity_id: str
+    planned_at: str
+    format: str = ""
+    reason: str = ""
+
+
+class CalendarPlannerOutput(BaseModel):
+    """Documento 05, secao 12. Deliberately drops the agent's own
+    ``balance_report``/``conflicts`` fields from the doc's example -
+    Documento 07 secoes 58-59 and Documento 10 Fase 10's Definition of
+    Done ("pillar balance checked", "format mix checked", "conflicts
+    detected") are computed in code by
+    ``app/services/calendar_balance.py``, never trusted directly from the
+    LLM - same principle as OpportunityEvaluatorOutput above."""
+
+    recommended_items: list[CalendarRecommendedItem] = Field(default_factory=list)

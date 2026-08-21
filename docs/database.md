@@ -2,7 +2,7 @@
 
 > Mantido conforme Documento 03, seção 133. Atualizar a cada fase que alterar o domínio.
 
-Última atualização: Fase 09 — Ideas & Opportunity Engine.
+Última atualização: Fase 10 — Content Calendar.
 
 ## ERD
 
@@ -33,6 +33,11 @@ erDiagram
     CONTENT_IDEA ||--o{ IDEA_RELATIONSHIP : "as idea_id (duplicate of)"
     CONTENT_IDEA ||--o{ IDEA_RELATIONSHIP : "as related_idea_id (original)"
     CHANNEL ||--o{ CONTENT_CLUSTER : "has (unused, no flow yet)"
+    CHANNEL ||--o{ CALENDAR_ITEM : has
+    CHANNEL ||--o{ PUBLISHING_SLOT : has
+    CHANNEL ||--o{ CALENDAR_RECOMMENDATION : has
+    CONTENT_IDEA ||--o{ CALENDAR_ITEM : "scheduled as"
+    CALENDAR_RECOMMENDATION ||--o{ CALENDAR_ITEM : "produced (batch)"
 
     ORGANIZATION {
         uuid id PK
@@ -374,6 +379,43 @@ erDiagram
         enum relationship_type "UK with idea_id+related_idea_id - parent|child|related|repurpose|sequel|series, hoje so RELATED e usado"
         timestamptz created_at
     }
+
+    CALENDAR_ITEM {
+        uuid id PK
+        uuid organization_id FK
+        uuid channel_id FK
+        uuid idea_id FK "nullable"
+        uuid project_id "sem FK - content_projects so existe na Fase 11"
+        uuid calendar_recommendation_id FK "nullable - null para itens adicionados manualmente no futuro"
+        enum content_type "reaproveita SourceVideoType (short|long_form|live|unknown)"
+        timestamptz planned_at
+        enum status "suggested|planned|approved|producing|ready|scheduled|published|cancelled"
+        enum source "ai|user"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    PUBLISHING_SLOT {
+        uuid id PK
+        uuid organization_id FK
+        uuid channel_id FK
+        enum day_of_week "monday..sunday"
+        time local_time
+        string timezone
+        enum content_type "reaproveita SourceVideoType"
+        int priority
+        boolean active
+    }
+
+    CALENDAR_RECOMMENDATION {
+        uuid id PK
+        uuid organization_id FK
+        uuid channel_id FK
+        jsonb balance_report_json "calculado em codigo, nao pelo agente"
+        jsonb conflicts_json "calculado em codigo, nao pelo agente"
+        uuid generated_by_agent_run_id "sem FK - agent_runs so existe na Fase 11"
+        timestamptz created_at
+    }
 ```
 
 `FEATURE_FLAG` fica fora do diagrama de relacionamentos porque `scope_id` é polimórfico (aponta para `organizations.id` ou `channels.id` dependendo de `scope_type`, ou é nulo quando `scope_type=global`) — não tem FK fixa de propósito (Documento 03, seção 85).
@@ -393,7 +435,8 @@ erDiagram
 | 07 | `channel_dna_versions`, `brand_profiles` | ✅ |
 | 08 | `content_strategies`, `content_pillars`, `strategy_rules` | ✅ |
 | 09 | `content_ideas`, `content_opportunities`, `opportunity_scores`, `content_clusters`, `idea_relationships` | ✅ |
-| 10+ | `content_calendar_entries`, ... | ⏳ |
+| 10 | `calendar_items`, `publishing_slots`, `calendar_recommendations` | ✅ |
+| 11+ | `agents`, `agent_versions`, `agent_prompts`, `agent_runs`, `content_projects`, `workflow_definitions`, ... | ⏳ |
 
 Ver Documento 03, seções 110-129 para o mapeamento completo fase → entidades. `sessions` não está no Documento 03 (que deixa "sessions/tokens conforme implementação" em aberto — Documento 10 §112) — modelada aqui seguindo os campos exatos do Documento 09 §6 (`session_id`, `user_id`, `created_at`, `expires_at`, `last_seen_at`, `revoked_at`).
 
@@ -471,3 +514,12 @@ Ver Documento 03, seções 110-129 para o mapeamento completo fase → entidades
 - **`idea_relationships` é direcional** (`idea_id` = a nova/duplicata, `related_idea_id` = a original) com `UniqueConstraint(idea_id, related_idea_id, relationship_type)`. O enum `IdeaRelationshipType` já traz os 6 valores do Documento 03 §26 (`parent`/`child`/`related`/`repurpose`/`sequel`/`series`), mas nesta fase só `RELATED` é de fato produzido (pela deduplicação) — os demais existem no schema para quando fases futuras (series/repurpose de conteúdo) precisarem, sem exigir migration nova.
 - **`content_clusters` existe no schema (Documento 03 §26) mas sem nenhum fluxo/endpoint que a use ainda** — nenhum agente desta fase produz clusters, e o Documento 07 não detalha o suficiente sobre a lógica de clusterização para implementar algo real sem inventar comportamento. Criar a tabela agora (vazia) segue a mesma régua já usada para `content_clusters`/`strategy_rules` em fases anteriores: a tabela nasce quando o Documento 03 a atribui à fase, mesmo que o fluxo que a povoa venha depois.
 - **5ª e 6ª tasks Celery do projeto** (`idea.generation`, `opportunity.evaluation`), reusando `mark_running_with_retry`. Diferente de `channel.strategy` (nunca auto-disparada), `idea.generation` bem-sucedida faz fan-out automático — dispara um `opportunity.evaluation` por `ContentIdea` nova (nunca para as arquivadas por deduplicação), já que avaliar cada ideia proposta é sempre o próximo passo esperado, sem exigir aprovação humana intermediária (diferente da ativação de uma Strategy).
+
+## Decisões de modelagem (Fase 10)
+
+- **`calendar_items.content_type`/`publishing_slots.content_type` reaproveitam o enum `SourceVideoType`** (`short`/`long_form`/`live`/`unknown`) em vez de um enum novo — mesma nomenclatura já usada em `source_videos.video_type` e no `recommended_format` das ideias (Fase 09). `unknown`/`live` simplesmente não são produzidos por nenhum fluxo de planejamento hoje, mas reusar o enum evita um tipo quase-duplicado só para este contexto.
+- **`calendar_recommendations` existe como uma entidade própria, separada de `calendar_items`**, apesar de o Documento 03 §27 não detalhar seus campos (só a lista, seção 119) — decisão de modelagem desta fase: `calendar_items` é *o item individual* (o que o usuário vê e aprova/rejeita/move), `calendar_recommendations` é *o lote/rodada* do Calendar Planner que produziu um conjunto de itens (`balance_report_json`/`conflicts_json` — diagnóstico calculado em código sobre aquele lote especificamente, não faz sentido por item). `calendar_items.calendar_recommendation_id` (nullable) rastreia a origem de cada item; fica `null` para itens adicionados manualmente no futuro (Documento 08 §25, "adicionar ao calendário" direto de um Idea Card - não implementado nesta fase).
+- **`balance_report_json`/`conflicts_json` são calculados em código** (`app/services/calendar_balance.py`), nunca copiados dos campos `balance_report`/`conflicts` do exemplo de output do Calendar Planner no Documento 05 §12 - mesmo princípio já aplicado ao `opportunity_score` na Fase 09 (Documento 10 F10 DoD: "pillar balance checked", "format mix checked", "conflicts detected" são resultados verificáveis, não opiniões do LLM).
+- **"Approved Opportunities" (input do Calendar Planner, Documento 05 §12) mapeado para `ContentIdea.status == APPROVED`** (a ação humana da Fase 09, `ContentIdeaService.approve()`) - o Documento 05 foi escrito prevendo um conceito de "oportunidade aprovada" mais amadurecido que este projeto ainda não tem (não existe um `ContentOpportunity.status=APPROVED` distinto); a aproximação mais fiel disponível hoje é a ideia já aprovada pelo usuário, que sempre tem uma `ContentOpportunity` associada (a avaliação que a tornou `RECOMMENDED` antes de ser aprovada).
+- **`calendar_items.project_id` existe como coluna (Documento 03 §27) mas sem FK real** - `content_projects` só é criada na Fase 11 (Documento 03 §120), então esta fase segue o mesmo padrão de "sem FK prematura" já usado em `generated_by_agent_run_id` desde a Fase 07 (a coluna já existe pronta para virar FK real quando a tabela existir, sem exigir backfill).
+- **Sétima task Celery do projeto** (`app/tasks/calendar_planning.py`, nome lógico `calendar.plan`), reusando `mark_running_with_retry`. Como `channel.strategy` (Fase 08), **nunca é auto-disparada** por nenhuma outra fase - depende de o usuário já ter aprovado pelo menos uma ideia, e itens sugeridos precisam de revisão humana antes de qualquer coisa acontecer com eles (Documento 08 §33: itens sugeridos têm aparência visual distinta, "Sugestão IA", até serem revisados).

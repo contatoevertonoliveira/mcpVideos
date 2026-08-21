@@ -215,3 +215,41 @@ class IdeaRelationshipType(StrEnum):
     REPURPOSE = "repurpose"
     SEQUEL = "sequel"
     SERIES = "series"
+
+
+class CalendarItemStatus(StrEnum):
+    """Documento 03, secao 27. Only SUGGESTED/PLANNED/APPROVED/CANCELLED
+    are reachable in Fase 10 - PRODUCING/READY/SCHEDULED/PUBLISHED belong
+    to phases that don't exist yet (Production Pipeline, Scheduler), but
+    the full enum is defined upfront per the doc, same pattern as
+    IdeaStatus in Fase 09."""
+
+    SUGGESTED = "suggested"
+    PLANNED = "planned"
+    APPROVED = "approved"
+    PRODUCING = "producing"
+    READY = "ready"
+    SCHEDULED = "scheduled"
+    PUBLISHED = "published"
+    CANCELLED = "cancelled"
+
+
+class CalendarItemSource(StrEnum):
+    """Documento 03 sec 27 lists a ``source`` field without specifying its
+    values - modeled after IdeaOrigin's ai/user split, the only two ways
+    an item can exist in this phase (Calendar Planner vs manual add)."""
+
+    AI = "ai"
+    USER = "user"
+
+
+class DayOfWeek(StrEnum):
+    """Documento 03, secao 28."""
+
+    MONDAY = "monday"
+    TUESDAY = "tuesday"
+    WEDNESDAY = "wednesday"
+    THURSDAY = "thursday"
+    FRIDAY = "friday"
+    SATURDAY = "saturday"
+    SUNDAY = "sunday"

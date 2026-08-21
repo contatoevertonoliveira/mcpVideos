@@ -24,6 +24,12 @@ from app.repositories.content_pillar import ContentPillarRepository
 from app.repositories.content_strategy import ContentStrategyRepository
 from app.repositories.source_video import SourceVideoRepository
 from app.schemas.brand_profile import BrandProfileRead, BrandProfileWrite
+from app.schemas.calendar import (
+    CalendarItemRead,
+    PublishingSlotRead,
+    PublishingSlotWrite,
+    RescheduleCalendarItemRequest,
+)
 from app.schemas.channel import ChannelRead
 from app.schemas.channel_connection import ConnectChannelResponse, OAuthCallbackRequest
 from app.schemas.channel_dna import ChannelDNAVersionRead, ChannelDNAVersionSummary
@@ -44,9 +50,12 @@ from app.schemas.content_strategy import (
 )
 from app.schemas.source_video import SourceVideoRead
 from app.services.brand_profile import BrandProfileService
+from app.services.calendar_item import CalendarItemService
 from app.services.channel_connection import ChannelConnectionService
 from app.services.channel_strategy import ChannelStrategyService
 from app.services.content_idea import ContentIdeaService
+from app.services.publishing_slot import PublishingSlotService
+from app.tasks.calendar_planning import dispatch_calendar_planning
 from app.tasks.channel_dna import dispatch_channel_dna
 from app.tasks.channel_intelligence import dispatch_channel_intelligence
 from app.tasks.channel_strategy import dispatch_channel_strategy
@@ -407,3 +416,119 @@ def approve_idea(
         channel_id=channel_id, idea_id=idea_id, organization_id=organization_id, user_id=user.id
     )
     return ContentIdeaRead.model_validate(idea)
+
+
+@router.post("/{channel_id}/calendar/generate", response_model=TriggerSyncResponse)
+def trigger_calendar_planning(
+    channel_id: uuid.UUID,
+    organization_id: uuid.UUID = Depends(require_permission(Permission.CHANNEL_MANAGE)),
+    db: DbSession = Depends(get_db),
+) -> TriggerSyncResponse:
+    channel = ChannelRepository(db).get_by_id(channel_id, organization_id=organization_id)
+    if channel is None:
+        raise NotFoundError("Channel not found", code="CHANNEL_NOT_FOUND")
+
+    job = dispatch_calendar_planning(db, channel_id=channel_id, organization_id=organization_id)
+    assert job.correlation_id is not None
+    return TriggerSyncResponse(job_id=job.id, correlation_id=job.correlation_id)
+
+
+@router.get("/{channel_id}/calendar", response_model=list[CalendarItemRead])
+def list_calendar(
+    channel_id: uuid.UUID,
+    organization_id: uuid.UUID = Depends(get_current_organization_id),
+    db: DbSession = Depends(get_db),
+) -> list[CalendarItemRead]:
+    items = CalendarItemService(db).list_calendar(
+        channel_id=channel_id, organization_id=organization_id
+    )
+    ideas_by_id = {
+        idea.id: idea
+        for idea in ContentIdeaRepository(db).list_by_channel(
+            channel_id=channel_id, organization_id=organization_id, limit=500
+        )
+    }
+
+    reads = []
+    for item in items:
+        read = CalendarItemRead.model_validate(item)
+        if item.idea_id is not None and item.idea_id in ideas_by_id:
+            read.idea_title = ideas_by_id[item.idea_id].title
+        reads.append(read)
+    return reads
+
+
+@router.post("/{channel_id}/calendar/{item_id}/approve", response_model=CalendarItemRead)
+def approve_calendar_item(
+    channel_id: uuid.UUID,
+    item_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    organization_id: uuid.UUID = Depends(require_permission(Permission.CHANNEL_MANAGE)),
+    db: DbSession = Depends(get_db),
+) -> CalendarItemRead:
+    item = CalendarItemService(db).approve(
+        channel_id=channel_id, item_id=item_id, organization_id=organization_id, user_id=user.id
+    )
+    return CalendarItemRead.model_validate(item)
+
+
+@router.post("/{channel_id}/calendar/{item_id}/reject", response_model=CalendarItemRead)
+def reject_calendar_item(
+    channel_id: uuid.UUID,
+    item_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    organization_id: uuid.UUID = Depends(require_permission(Permission.CHANNEL_MANAGE)),
+    db: DbSession = Depends(get_db),
+) -> CalendarItemRead:
+    item = CalendarItemService(db).reject(
+        channel_id=channel_id, item_id=item_id, organization_id=organization_id, user_id=user.id
+    )
+    return CalendarItemRead.model_validate(item)
+
+
+@router.post("/{channel_id}/calendar/{item_id}/reschedule", response_model=CalendarItemRead)
+def reschedule_calendar_item(
+    channel_id: uuid.UUID,
+    item_id: uuid.UUID,
+    payload: RescheduleCalendarItemRequest,
+    user: User = Depends(get_current_user),
+    organization_id: uuid.UUID = Depends(require_permission(Permission.CHANNEL_MANAGE)),
+    db: DbSession = Depends(get_db),
+) -> CalendarItemRead:
+    item = CalendarItemService(db).reschedule(
+        channel_id=channel_id,
+        item_id=item_id,
+        organization_id=organization_id,
+        user_id=user.id,
+        planned_at=payload.planned_at,
+    )
+    return CalendarItemRead.model_validate(item)
+
+
+@router.post("/{channel_id}/publishing-slots", response_model=PublishingSlotRead)
+def add_publishing_slot(
+    channel_id: uuid.UUID,
+    payload: PublishingSlotWrite,
+    organization_id: uuid.UUID = Depends(require_permission(Permission.CHANNEL_MANAGE)),
+    db: DbSession = Depends(get_db),
+) -> PublishingSlotRead:
+    slot = PublishingSlotService(db).add(
+        channel_id=channel_id,
+        organization_id=organization_id,
+        day_of_week=payload.day_of_week,
+        local_time=payload.local_time,
+        content_type=payload.content_type,
+        timezone=payload.timezone,
+        priority=payload.priority,
+    )
+    return PublishingSlotRead.model_validate(slot)
+
+
+@router.get("/{channel_id}/publishing-slots", response_model=list[PublishingSlotRead])
+def list_publishing_slots(
+    channel_id: uuid.UUID,
+    organization_id: uuid.UUID = Depends(get_current_organization_id),
+    db: DbSession = Depends(get_db),
+) -> list[PublishingSlotRead]:
+    slots = PublishingSlotService(db).list(channel_id=channel_id, organization_id=organization_id)
+    return [PublishingSlotRead.model_validate(slot) for slot in slots]

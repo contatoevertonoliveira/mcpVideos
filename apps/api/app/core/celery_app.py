@@ -16,6 +16,7 @@ celery_app = Celery(
         "app.tasks.channel_strategy",
         "app.tasks.opportunity_evaluation",
         "app.tasks.idea_generation",
+        "app.tasks.calendar_planning",
     ],
 )
 

@@ -8,19 +8,20 @@
 
 ## 1. Status Geral
 
-**Fase atual:** ✅ **Fase 09 — Ideas & Opportunity Engine implementada e validada nesta sessão, ainda não commitada.** Ver seção 4.10 para o relatório completo. O retrofit da fundação visual (Documento 08A, seção 4.9) foi commitado (`d402cdb`) antes de iniciar a Fase 09. Fases 01-08 + retrofit visual 100% validados e commitados (seções 4.1-4.9).
+**Fase atual:** ✅ **Fase 10 — Content Calendar** (seção 4.11), **retrofit de Ideias/Calendário para o Documento 08B** (seção 4.12), **reconstrução do Dashboard/AppShell** (seção 4.13) e **ajuste de tokens + troca de fonte + correção de um bug real de fonte** (seção 4.14) — todos implementados e validados nesta sessão, prestes a ser commitados a pedido do usuário. Fase 09 foi commitada (`3f6bcb4`) antes de iniciar a Fase 10. Fases 01-09 + retrofit visual (Documento 08A) 100% validados e commitados (seções 4.1-4.10).
 
-**Próximo passo:** commitar/enviar a Fase 09 (aguardando confirmação do usuário) e depois decidir entre iniciar a **Fase 10 — Content Calendar** ou fazer a passada dedicada de refinamento estético que o usuário sinalizou que viria depois ("depois ainda vamos estruturar melhor essa parte de estética").
+**Próximo passo:** commit/push desta sessão (Fase 10 + retrofit 08B + skin refactor + fix de fonte) concluído; depois decidir entre iniciar a **Fase 11 — Workflow & Agent Engine** ou continuar aprofundando o refinamento visual (Login/Registro/Canais ainda não passaram por uma rodada específica do Documento 08B).
 
 ---
 
 ## 2. Documentos Mestres — Checklist
 
-Todos os **10 documentos** previstos já foram entregues e lidos, mais um complemento entregue mid-projeto:
+Todos os **10 documentos** previstos já foram entregues e lidos, mais dois complementos entregues mid-projeto:
 
 | # | Documento | Status | Resumo de uma linha |
 |---|-----------|--------|----------------------|
 | 08A | Direção Visual, Design System e Linguagem Futurista da Interface | ✅ Lido (2026-08-20, entre a Fase 08 e a Fase 09) | Complemento obrigatório do Documento 08: identidade "AI Content OS + Video Platform" — Dark Mode Premium como tema principal, tokens obrigatórios (surface/border/status/radius/shadow/motion/z-index), tipografia geométrica, layout sidebar+topbar, componentes reutilizáveis, checklist obrigatório antes de qualquer tela nova (§212) |
+| 08B | Visual Baseline V1 e Regras de Reprodução pelo Claude Code | ✅ Lido (2026-08-20, durante a Fase 10, apareceu em `/docs` no meio da implementação) | Segundo complemento do Documento 08/08A: referências visuais aprovadas do Google Stitch (`docs/design/reference/`), status APPROVED, "Mandatory Visual Implementation Specification", instrução direta (§159) de consultar 08/08A/08B + referência Stitch antes de implementar frontend de qualquer tela coberta. Mapeia Ideias→F09, Calendário→F10, Content Production→F12-F17. Não cria fase nova (§165) — só define como o frontend das fases existentes deve ser construído |
 
 | # | Documento | Status | Resumo de uma linha |
 |---|-----------|--------|----------------------|
@@ -459,14 +460,142 @@ bash infra/scripts/smoke-test.sh
 # aparecerem; clicar em "Adicionar" numa ideia recomendada
 ```
 
+### 4.11 Fase 10 — Relatório de Conclusão
+
+**Implementado:**
+- **3 entidades novas** (Documento 03 §119/§27-28, Documento 10 F10): `calendar_items` (status literal do documento: `suggested→planned→approved→producing→ready→scheduled→published→cancelled` — só `suggested`/`approved`/`cancelled` são alcançáveis nesta fase, o resto pertence a Produção/Scheduler futuros), `publishing_slots` (CRUD simples do usuário, janelas recorrentes de publicação), `calendar_recommendations` (metadados de uma rodada do Calendar Planner — `balance_report_json`/`conflicts_json` calculados em código, nunca copiados da opinião do agente). Migration `1b3ffc9cdd9d`.
+- **`content_projects` deliberadamente não criada** — Documento 03 §119 atribui `calendar_items`/`publishing_slots`/`calendar_recommendations` à Fase 10, mas `content_projects` só aparece na Fase 11 (§120). `calendar_items.project_id` existe como coluna (Documento 03 §27) mas sem FK real ainda, mesmo padrão de "sem FK prematura" já usado em `generated_by_agent_run_id` desde a Fase 07.
+- **Calendar Planner agent** (Documento 05 §12): recebe a estratégia ativa, publishing slots, "Approved Opportunities" (neste projeto, `ContentIdea.status=APPROVED` da Fase 09 — a aproximação mais próxima do conceito do documento) e o calendário existente; propõe `recommended_items` (opportunity_id/planned_at/format/reason). O contrato Pydantic descarta deliberadamente os campos `balance_report`/`conflicts` do exemplo do documento — mesmo motivo do `OpportunityEvaluatorOutput` na Fase 09: cálculo de negócio crítico nunca fica só na opinião do LLM.
+- **`app/services/calendar_balance.py`**: `build_format_balance`/`build_pillar_balance`/`detect_conflicts` — funções puras e testáveis que calculam o balanceamento real do lote sugerido contra a estratégia ativa e detectam conflitos de data com o que já está no calendário (Documento 07 §58-59; Documento 10 F10 DoD: "pillar balance checked", "format mix checked", "conflicts detected").
+- **`CalendarPlanningService.generate_recommendations()`**: carrega candidatos (ideias aprovadas sem calendar_item ativo ainda), roda o agente, cria `CalendarItem(status=SUGGESTED, source=AI)` por item retornado, computa `balance_report_json`/`conflicts_json` em código e persiste um `CalendarRecommendation` como o "lote" que gerou aqueles itens.
+- **`CalendarItemService`**: `approve()`/`reject()`/`reschedule()` — as três ações humanas do critério de aceite literal do Documento 10 F10 ("ver calendário sugerido, aprovar item, rejeitar, mover"). O Calendar Planner só cria itens `SUGGESTED`; toda transição de estado é ação humana, mesma separação "agente propõe, service valida" de todas as fases anteriores.
+- **`PublishingSlotService`**: CRUD simples (`add`/`list`), mesmo espírito de `brand_profiles`/`strategy_rules`.
+- **Sétima task Celery do projeto** (`app/tasks/calendar_planning.py`, nome lógico `calendar.plan`). Como `channel.strategy` na Fase 08, **nunca é auto-disparada** — depende de o usuário já ter aprovado pelo menos uma ideia, e o Documento 08 §33 exige que itens sugeridos tenham tratamento visual distinto ("Sugestão IA") até revisão humana, então não há "silêncio" para automatizar ainda.
+- **Endpoints novos**: `POST /{id}/calendar/generate`, `GET /{id}/calendar` (junta o título da ideia vinculada), `POST /{id}/calendar/{item_id}/approve`, `POST /{id}/calendar/{item_id}/reject`, `POST /{id}/calendar/{item_id}/reschedule`, `POST`/`GET /{id}/publishing-slots`.
+- **Frontend**: bloco "Calendário" na página `/channels` — cards com título da ideia, badge de status (Sugestão IA/Planejado/Aprovado/Rejeitado/...), data/hora, formato, e botões "Aprovar"/"Rejeitar"/"Mover" (input `datetime-local` + submit) só para itens `suggested`/`planned`, atendendo ao critério de aceite literal. Botão "Gerar calendário" adicionado junto aos demais.
+- **Não implementado** (fora de escopo por definição, documentado em `docs/database.md`): visualizações "Semana"/"Mês" do Documento 08 §30 — só a visualização "Lista" foi construída (mesma régua de escopo já usada para a tela dedicada de Ideias na Fase 09: um componente de calendário/grid real só quando uma tela o exigir de fato); drag-and-drop para mover itens (Documento 08 §32 já diz "pode ser adicionado quando estável" — o formulário com `datetime-local` cobre "mover" sem essa complexidade); UI de gestão de Publishing Slots (a API existe e é usada como contexto do agente, mas nenhuma tela de CRUD foi construída — não é exigido pelo critério de aceite literal); "Clusters"/"Campaigns" como inputs do Calendar Planner (Fase 09 já deixou `content_clusters` sem uso, e campanhas nem têm entidade ainda); "Production Capacity" no balanceamento (Documento 07 §59 pede considerar orçamento/capacidade de renderização — isso só existe a partir da Fase 14, Media Router & Cost Controller).
+
+**Validado nesta sessão:**
+- 185 testes de backend (pytest) contra Postgres+Redis reais: `test_calendar_balance.py` (funções puras — ratio de formato/pilar bate com cálculo manual, conflitos detectados corretamente dentro do lote e contra itens existentes), `test_calendar_planning_service.py` (cria itens SUGGESTED, ignora ideias que já têm calendar_item, rejeita sem ideias aprovadas/sem estratégia ativa, detecta conflito real contra um item plantado no mesmo dia), `test_calendar_item_service.py` (approve/reject/reschedule com as transições de estado corretas e rejeitadas nos casos inválidos, canal errado rejeitado), `test_publishing_slot_service.py` (CRUD básico), endpoints HTTP estendidos em `test_channels_endpoints.py`. `ruff`/`mypy` limpos.
+- Migration validada com ciclo `upgrade → downgrade → upgrade` no banco de dev e aplicada ao banco de teste.
+- **Fluxo completo validado via `curl` contra a stack Docker real**: canal novo → cadeia automática `sync→intelligence→dna` → estratégia gerada e aprovada → ideias geradas/avaliadas → 2 ideias recomendadas aprovadas → `POST /calendar/generate` → worker processou `calendar.plan` de ponta a ponta (confirmado nos logs do worker) → `GET /calendar` retornou os 2 itens `suggested`, formatos e datas corretos (espaçados por dia), título da ideia corretamente associado. `approve`/`reject`/`reschedule`/publishing-slots testados via `curl` com sucesso.
+- **Frontend**: `eslint`, `tsc --noEmit`, `next build` — todos limpos. **Validado no navegador real com cliques físicos que registraram com sucesso**: "Gerar calendário" → bloco "Calendário" apareceu com o item sugerido → preenchido o campo de data/hora e clicado "Mover" → `planned_at` atualizado no banco e refletido na tela → clicado "Aprovar" → badge mudou para "Aprovado" e os botões de ação corretamente desapareceram (mesmo padrão condicional de "Adicionar" desaparecer após aprovar uma ideia na Fase 09). "Rejeitar" foi validado via `curl` (mesmo código, endpoint simétrico ao de aprovar) mas não re-clicado fisicamente nesta sessão. Notado novamente: o dev server do `web` em Docker no Windows precisou de um `docker compose restart web` manual para pegar os arquivos novos (mesma característica do bind mount já registrada na Fase 09).
+
+**Pendências / Known Limitations:**
+- UI de gestão de Publishing Slots não construída — a API existe e é usada como contexto do Calendar Planner, mas sem tela de CRUD.
+- `docs/database.md` atualizado com `calendar_items`/`publishing_slots`/`calendar_recommendations` no ERD e as decisões desta fase.
+- **Nota retroativa**: a UI original desta fase (bloco inline em `/channels`, "Semana"/"Mês" não construídas) foi substituída pelo retrofit do Documento 08B logo em seguida — ver seção 4.12 para o estado final real.
+
+**Como validar:** ver seção 4.12 (a forma de validar manualmente mudou com o retrofit — Calendário agora é `/calendar`, não mais um bloco em `/channels`).
+
+### 4.12 Retrofit Ideias e Calendário (Documento 08B) — Relatório de Conclusão
+
+**Contexto:** durante a implementação da Fase 10, um novo documento apareceu em `/docs`: **Documento 08B — Visual Baseline V1**, junto com 5 referências visuais aprovadas do Google Stitch em `docs/design/reference/` (`dashboard.png`, `ideas.png`, `calendar.png`, `content-production.png`, `brand-concept.png`). O documento é explícito: "Mandatory Visual Implementation Specification... APPLIES TO: All frontend implementation phases", com instrução direta (§159) de ler Documento 08/08A/08B e inspecionar a referência do Stitch **antes** de implementar o frontend de qualquer tela coberta — e mapeia literalmente Ideias→F09 e Calendário→F10 (§130), as duas telas construídas como blocos simples em `/channels` até este ponto.
+
+Perguntado ao usuário como proceder (mesmo padrão da interrupção do Documento 08A na Fase 09): optou por **ler tudo agora e retrofitar Ideias+Calendário antes de seguir**, em vez de commitar a F10 como estava e deixar para a passada de refinamento visual futura.
+
+**Implementado:**
+- **Documento 08B lido por completo** (167 seções) — hierarquia visual (§158: Documento 08 > 08A > 08B > referências Stitch em caso de conflito), estrutura de `AppShell` (sidebar Dashboard/Ideas/Calendar/Content/Analytics + nav utilitária Channels/Settings/Profile), componentes nomeados por tela (`OpportunityCard`, `CalendarContentCard`/`CalendarSuggestionCard`, `PageHeader`, `FilterChips`, `CalendarToolbar`, `EditorialCalendar`), regra de não usar cor fixa no componente para score (`getOpportunityScoreVariant`, §37), tratamento visual distinto para sugestões não decididas (borda tracejada + badge "IA", §47-48) vs. itens já decididos (rail de status colorido, §46).
+- **`docs/design/reference/ideas.png` inspecionada** e usada como referência real para `OpportunityCard`. **`calendar.png` revelou conter, na prática, o mesmo conteúdo pixel-a-pixel de `ideas.png`** (dimensões/hash diferentes — provável export duplicado do lado do usuário) — Calendário foi implementado a partir da especificação textual do Documento 08B (que tem prioridade sobre a imagem mesmo quando ela é válida, por §158), não da imagem.
+- **`AppShell` reestruturado**: nav principal agora Dashboard/Ideias/Calendário; Canais movido para uma nav utilitária inferior (mesma seção do usuário/Sair) — decisão documentada em `docs/ui.md` (o produto ainda não tem seletor de canal, então "Canais" funciona mais como gestão/settings do que como item de uso diário).
+- **6 componentes novos** (`apps/web/src/components/`): `page-header.tsx`, `filter-chips.tsx`, `opportunity-card.tsx`, `calendar-item-card.tsx`, `calendar-toolbar.tsx`, `editorial-calendar.tsx`.
+- **2 rotas novas**: `/ideas` (PageHeader + FilterChips por status + grid de OpportunityCard) e `/calendar` (PageHeader + CalendarToolbar Semana/Lista + EditorialCalendar em grid de 7 colunas ou lista de CalendarItemCard). Ambas operam sobre o primeiro canal `connected` do usuário (sem seletor de canal ainda — decisão de escopo documentada).
+- **Blocos "Ideias de conteúdo" e "Calendário" removidos de `/channels`**, junto com os botões "Gerar ideias"/"Gerar calendário" — essas ações agora vivem como a ação primária do `PageHeader` de cada tela dedicada, evitando UI duplicada/divergente.
+- **Server actions reaproveitadas**: as actions de Ideias/Calendário continuam em `app/(app)/channels/actions.ts` (evita duplicar lógica), importadas pelas novas páginas; `revalidatePath` de cada uma passou a apontar para `/ideas`/`/calendar` em vez de `/channels`.
+- **Não implementado** (decisões de escopo documentadas em `docs/ui.md`/`docs/design-system.md`): visualização "Mês" (só Semana/Lista), seletor de canal (`Channel Selector`, Documento 08B §12), botão global `AI Magic` (§10-11, fora do escopo desta retrofit — só Ideias+Calendário), ação de descartar/rejeitar uma ideia (o Stitch mostra um ícone de lixeira no `OpportunityCard`, mas o backend da Fase 09 só tem `approve()` — adicionar isso seria mudança de backend, fora do escopo "retrofit visual").
+
+**Validado nesta sessão:**
+- `eslint`, `tsc --noEmit` (via `next build`), `next build` — todos limpos; `/ideas` e `/calendar` aparecem como rotas dinâmicas.
+- Stack Docker reconstruída (`docker compose restart web`, mesmo detalhe operacional de bind mount já registrado). **Validado no navegador real com cliques físicos que registraram com sucesso**: `/ideas` renderizou os 3 `OpportunityCard` reais (score/formato/pilar/fonte/callout "Por quê"/badge de status), filtro "Aprovadas" via clique filtrou corretamente para as 2 ideias aprovadas; `/calendar` renderizou a grade semanal de 7 colunas com os itens nos dias corretos, badge "IA" nas sugestões, clique em "Aprovar" mudou o item para o tratamento de rail sólido e badge "Aprovado" (confirmado no banco); troca para "Lista" funcionou via clique; preenchido o campo de data/hora e clicado "Mover" atualizou `planned_at` (confirmado no banco e na tela). `/channels` confirmada sem regressão (Diagnóstico/DNA/Estratégia intactos, blocos de Ideias/Calendário corretamente ausentes).
+- Um canal de teste sem DNA/Estratégia foi selecionado automaticamente como "canal primário" durante a primeira tentativa (comportamento correto dado múltiplos canais de teste acumulados nesta sessão) — populado via script direto contra os services (mesmo padrão dos testes automatizados) para validar o caminho feliz.
+
+**Pendências / Known Limitations:**
+- `docs/design/reference/calendar.png` precisa ser re-exportado pelo usuário — o arquivo atual duplica `ideas.png`.
+- Visualização "Mês", seletor de canal, `AI Magic`, e ação de descartar ideia ficam para a passada de refinamento visual completo já sinalizada.
+- `docs/ui.md` e `docs/design-system.md` atualizados com o estado final.
+
+**Como validar:**
+```bash
+cd apps/web && npm run lint && npm run typecheck && npm run build
+docker compose up -d --build
+# testar manualmente: http://localhost:3000/ideas (gerar ideias, filtrar por
+# status, aprovar) e http://localhost:3000/calendar (gerar calendário,
+# alternar Semana/Lista, aprovar/rejeitar/mover um item)
+```
+
+### 4.13 Skin refactor — Dashboard e Sidebar (Documento 08B) — Relatório de Conclusão
+
+**Contexto:** logo após reportar a conclusão da Fase 10 + retrofit de Ideias/Calendário, o usuário pediu explicitamente para a "skin do sistema" ser refatorada seguindo as referências do Documento 08B, com "estrutura totalmente moderna igual as imagens deixadas" — sinal de que o retrofit parcial (só Ideias+Calendário) não bastava; o Dashboard, que ainda usava o layout genérico da Fase 03, precisava do mesmo tratamento.
+
+**Implementado:**
+- **`/dashboard` reconstruído** seguindo a estrutura do Documento 08B §23-31 (`Good morning`, `Today`, `Channel Health`, `Needs Your Attention`, `Metrics`), mas **só com dados 100% reais** — nenhum número inventado (regra explícita do documento, §131-132: "Proibido Hardcode de Mock em Produção"):
+  - Saudação por horário do servidor (Bom dia/Boa tarde/Boa noite) + nome real do usuário; subtítulo com contagem real de itens do calendário para hoje; badge com o `automation_mode` real do canal (substitui o "Autopilot Active" fixo do Stitch, que não existe como conceito real ainda).
+  - **"Hoje"**: lista real de `calendar_items` cujo `planned_at` cai no dia corrente (novo componente `TodayContentItem` — hora/formato/título/status, sem os pontos de pipeline Script/Storyboard/Media/QA do Stitch, que não existem até a Fase 12+).
+  - **"Status operacional"** substitui o `ChannelHealthCard` circular (92/100) do Stitch — a pontuação composta do Stitch não tem fórmula definida em nenhum documento e seria inventada; em vez disso, 4 checagens booleanas reais (canal conectado, DNA ativo, estratégia ativa, calendário com itens), mesmo espírito do card original ("condição operacional, não gamificação", Documento 08B §29) sem fabricar um número.
+  - **"Precisa da sua atenção"**: real — estratégia pendente de aprovação e/ou contagem de sugestões de calendário aguardando revisão, com link direto para a tela relevante.
+  - **3 `MetricCard`** com contagens reais já expostas pela API (vídeos importados, ideias aprovadas, itens no calendário) no lugar de "Views (30d)"/"Subs (30d)"/"OS Index" do Stitch — não há endpoint de métricas agregadas ainda (a Fase 19, Analytics & Learning Engine, é quem introduz isso), e "OS Index" não tem definição em nenhum documento.
+  - Removida a antiga seção "Suas organizações" (lista estática de memberships, sem ação de troca de organização de fato conectada a nenhum botão) — confirmado que não existia nenhuma UI de troca de organização real para preservar; e-mail do usuário continua visível no rodapé da sidebar.
+- **`AppShell` polido**: bloco de logo agora empilha nome + descritor ("mcp_videos" / "AI Automation", Documento 08B §9 "Product Name"/"Product Descriptor"); adicionado o slot **"AI Magic"** (Documento 08B §10-11) — deliberadamente um `<div>` não-interativo (não um `<button>`), já que o próprio documento manda só "preparar o componente visual" nesta fase sem funcionalidade real por trás; usa o token `--shadow-glow-primary` já existente, sem introduzir cor nova.
+- **2 componentes novos**: `metric-card.tsx`, `today-content-item.tsx`.
+
+**Não implementado** (decisões de escopo — documentadas em `docs/ui.md`): funcionalidade real por trás do "AI Magic" (Documento 08B §11 já avisa para não implementar prematuramente); Login/Registro/`/` (splash) não tocados nesta passada — já estavam alinhados ao Documento 08A e não têm equivalente direto nas 5 referências do Stitch; Content Production/Analytics (telas do Documento 08B sem fase funcional implementada ainda — F12+/F19) continuam fora da navegação.
+
+**Validado nesta sessão:**
+- `eslint`, `next build` (typecheck incluso) — limpos.
+- Stack Docker reconstruída (`docker compose restart web`). **Validado no navegador real**: `/dashboard` renderizou saudação real, badge de automação real, 4 checagens de status corretas (todas ✓ para o canal de teste populado), card de atenção com 1 sugestão real linkando para `/calendar`, e as 3 métricas reais (5 vídeos, 2 ideias aprovadas, 2 itens no calendário) — todos os números conferidos contra o banco. Sidebar confirmada com o novo bloco de logo + "AI Magic" + nav reorganizada. Um texto aparentemente estranho no topbar ("mcp_videos Studio") foi investigado e confirmado como o nome real da organização de teste no banco (`mcp_videos Studio`), não um bug de renderização.
+
+**Pendências / Known Limitations:**
+- `AI Magic` é puramente decorativo (por design do próprio documento nesta fase).
+- Login/Registro/splash e Canais ainda não passaram por uma segunda rodada de polimento visual específica do Documento 08B (continuam no nível do retrofit do Documento 08A).
+- `docs/ui.md` e `docs/design-system.md` atualizados com o novo estado do Dashboard/AppShell.
+
+**Como validar:**
+```bash
+cd apps/web && npm run lint && npm run build
+docker compose up -d --build
+# testar manualmente: http://localhost:3000/dashboard com um canal que já
+# tenha DNA/estratégia/ideias/calendário reais — todos os números do
+# dashboard devem bater com o que existe de fato para aquele canal
+```
+
+### 4.14 Ajuste de tokens, troca de fonte e bug real de fonte encontrado — Relatório de Conclusão
+
+**Contexto:** o usuário revisou o resultado da seção 4.13 comparando lado a lado com as referências do Stitch e apontou que a skin "ainda não ficou moderna como nas imagens". Rodada de ajuste fino nos tokens e nos componentes, seguida de um pedido explícito para adotar **Poppins** como fonte padrão — o que revelou um bug real pré-existente (fonte customizada nunca funcionou desde o retrofit do Documento 08A).
+
+**Implementado:**
+- **Paleta dark recalibrada mais escura** (Documento 08B §18/125: fundo "graphite/navy-black quase preto, nunca `#000`") — `--background`/`--surface`/`--sidebar` no `.dark` reduzidos de `oklch(0.15...)`/`oklch(0.19...)`/`oklch(0.125...)` para `oklch(0.11...)`/`oklch(0.155...)`/`oklch(0.085...)`, mais próximos do contraste das referências.
+- **`Card` sem borda visível**: trocado `ring-1 ring-foreground/10` por `shadow-(--shadow-sm)` — Documento 08B §92/98 pede que profundidade no dark mode venha de contraste de superfície + sombra suave, não de contorno visível. Mudança global (afeta todas as telas que usam o primitive `Card`).
+- **Score do `OpportunityCard` simplificado**: de um badge colorido (pill) para ícone + número colorido sem fundo, batendo com o tratamento minimalista da referência.
+- **"AI Magic" com gradiente real**: token novo `--primary-secondary` (hue vizinho de `--primary`, não uma cor hardcoded) alimenta um `bg-gradient-to-r from-primary to-primary-secondary` de verdade, no lugar do tint fraco da primeira versão.
+- **Tipografia mais pesada**: `PageHeader` (`text-2xl` → `text-3xl md:text-4xl font-bold`) e `MetricCard` (`text-3xl` → `text-4xl font-bold`).
+- **Fonte trocada de Geist Sans para Poppins** (`apps/web/src/app/layout.tsx`) — Poppins é geométrica, mais próxima do peso/caráter da tipografia do Stitch. Mantida na mesma variável CSS `--font-geist-sans` para não precisar tocar em `globals.css`.
+- **Bug real encontrado e corrigido**: `globals.css` tinha `--font-sans: var(--font-sans);` dentro do bloco `@theme inline` — uma custom property **autorreferente**, inválida em CSS, que silenciosamente cai no valor herdado/inicial em vez de resolver. Na prática, **nenhuma fonte customizada jamais renderizou nesta aplicação**, nem Geist durante todo o retrofit do Documento 08A — só ninguém tinha reparado porque o fallback do navegador é visualmente parecido o suficiente. Corrigido para `--font-sans: var(--font-geist-sans);` (mesmo padrão já usado corretamente por `--font-mono`). Verificado via `getComputedStyle` no navegador real que `<html>`/`<body>`/`<h1>` agora resolvem para `Poppins, "Poppins Fallback"` de fato — não só que o texto "Poppins" aparece em algum lugar do CSS servido.
+- **`suppressHydrationWarning` adicionado ao `<html>`** — o script anti-FOUC (que remove a classe `dark` antes do hydration quando o usuário salvou tema claro) legitimamente faz o DOM real divergir do que o React esperaria renderizar nesse elemento; esse é o padrão de correção documentado para exatamente esse cenário (usado por bibliotecas como `next-themes`), não estava causando o bug de fonte, mas apareceu como warning real no console do usuário durante a investigação e valia a pena silenciar corretamente.
+
+**Notas operacionais importantes desta sessão (relevantes para depurar problemas visuais futuros):**
+- O `web` no `docker-compose.yml` monta `./apps/web:/app` (bind mount, reflete mudanças de código na hora) **mas também tem um volume anônimo separado em `/app/.next`** — o cache de build do Turbopack. Um `docker compose restart web` sozinho **não limpa esse volume**, então mudanças de CSS/tema podem continuar servindo bytes antigos mesmo com o container reiniciado e o código-fonte já atualizado. A forma confiável de forçar um rebuild limpo é `docker compose stop web && docker compose rm -f web && docker compose up -d --build web` (recria o container, e com ele o volume anônimo).
+- Toda alteração visual nesta sessão foi verificada **na camada de bytes servidos** (`curl` no chunk CSS, inspecionando o valor real da custom property) e, quando possível, via `getComputedStyle` no navegador real — não só "o build passou" — porque o cache do Turbopack já tinha mascarado uma mudança real pelo menos uma vez nesta sessão.
+
+**Validado nesta sessão:**
+- `eslint`, `next build` — limpos.
+- Stack Docker totalmente recriada (`docker compose stop/rm/up --build web`, e uma vez o stack inteiro com `docker compose down && up --build`) — dados de desenvolvimento (canais de teste) confirmados intactos após o down/up completo.
+- Confirmado via `curl` direto no chunk CSS servido que `--background` resolve para `#030408` (dark) e que `--font-sans: var(--font-geist-sans)` está presente no `:root`. Confirmado via `getComputedStyle` no navegador real que `<html>`/`<body>`/`<h1>` renderizam `font-family: Poppins, "Poppins Fallback"`.
+
+**Como validar:**
+```bash
+cd apps/web && npm run lint && npm run build
+docker compose stop web && docker compose rm -f web && docker compose up -d --build web
+# no navegador: abrir DevTools > Console, checar getComputedStyle(document.body).fontFamily
+```
+
 ## 5. Pendências / Perguntas em Aberto
 
-- Fases 01-08 + retrofit visual commitados e enviados para `main` (`b3041ae`, `ed9b437`, `7b54b9c`, `4e5ecdc`, `7675039`, `ecf72cd`, `b518bf6`, `6f37fe6`, `d402cdb`). **Fase 09 — Ideas & Opportunity Engine implementada e validada nesta sessão, ainda não commitada** — aguardando confirmação do usuário.
+- Fases 01-09 + retrofit visual (Documento 08A) commitados e enviados para `main` (`b3041ae`, `ed9b437`, `7b54b9c`, `4e5ecdc`, `7675039`, `ecf72cd`, `b518bf6`, `6f37fe6`, `d402cdb`, `3f6bcb4`). **Fase 10 + retrofit de Ideias/Calendário/Dashboard (Documento 08B) + fix de fonte commitados nesta sessão** — hash a registrar na próxima atualização deste arquivo.
 - Documento 10 (seção 137) sugere organizar os documentos em `/docs/master/` com slugs (`01-product-brief.md`, etc.) — não feito; usuário optou implicitamente por manter o padrão atual `Documento NN - Titulo.md` ao pedir para seguir direto para a Fase 01.
-- Ainda não definido: nome comercial do produto, provedor de IA/mídia real a integrar primeiro na Fase 13 (Documento 10 §71 pede benchmark atualizado antes de decidir — não assumir Higgsfield/Kie/fal.ai/WaveSpeed/Replicate como escolha final), moeda/plano de billing.
+- Ainda não definido: nome comercial do produto, provedor de IA/mídia real a integrar primeiro na Fase 13 (Documento 10 §71 pede benchmark atualizado antes de decidir — não assumir Higgsfield/Kie/fal.ai/WaveSpeed/Replicate como escolha final), moeda/plano de billing. Documento 08B §73 sugere "Creator OS" como placeholder visual interno, não como nome comercial definitivo.
 - Credenciais reais do Google Cloud (`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`) ainda não configuradas — usuário optou por seguir só com `FakeYouTubeGateway` por enquanto (Fase 04). `GoogleYouTubeGateway` está implementada e pronta (incluindo os métodos de import da Fase 05), mas nunca exercitada contra o Google real.
 - Credenciais reais da Anthropic (`ANTHROPIC_API_KEY`) também não configuradas — usuário optou por seguir só com `FakeLLMGateway` por enquanto (Fase 06), mesmo padrão de decisão da Fase 04. `AnthropicLLMGateway` implementada e pronta, nunca exercitada.
-- Direção visual: **resolvida** — Documento 08A lido e a fundação visual (dark premium, tokens, `AppShell`) retrofitada nesta sessão (seção 4.9). Próximas telas (Fase 09+) já nascem sobre essa fundação.
+- Direção visual: **fundação resolvida** (Documento 08A, seção 4.9) **e agora com baseline concreto** (Documento 08B, seção 4.12) — Ideias e Calendário já retrofitadas; Dashboard e Canais ainda usam a fundação genérica do 08A, sem os componentes específicos do 08B (`Today`, `ChannelHealthCard`, `AI Magic` etc.) — ficam para a passada de refinamento visual completo já sinalizada pelo usuário. `docs/design/reference/calendar.png` precisa ser re-exportado (duplica `ideas.png` no momento).
 
 ---
 
@@ -574,6 +703,35 @@ bash infra/scripts/smoke-test.sh
 - Investigado um título aparentemente corrompido (`"DanÃ§a"`) ao inspecionar via `curl | python -m json.tool`; confirmado duas vezes que é artefato do shell/`json.tool` neste ambiente Windows, não um bug real — os bytes HTTP crus e o JSON re-parseado mostram "ç" correto.
 - **Diferente das Fases 07/08, os cliques físicos no navegador registraram com sucesso desta vez**: fluxo "Gerar DNA" → "Gerar estratégia" → "Aprovar estratégia" → "Gerar ideias" → "Adicionar" testado de ponta a ponta clicando de verdade na UI (não só via `curl`). Detalhe operacional: o dev server do `web` em Docker precisou de um `docker compose restart web` manual para pegar os arquivos novos — o hot-reload do Turbopack não disparou sozinho sobre o bind mount no Docker Desktop for Windows.
 - Próximo passo: usuário decide se commita/envia a Fase 09 agora, e depois se seguimos para a Fase 10 — Content Calendar ou fazemos a passada de refinamento estético já sinalizada.
+- Usuário pediu para commitar/enviar a Fase 09. Commit `3f6bcb4` ("feat(F09): ideas and opportunity engine") criado e enviado para `main`.
+
+### 2026-08-20 — Fase 10 — Content Calendar (mesma data, sessão seguinte)
+- Usuário pediu para seguir para a próxima fase.
+- Implementadas as 3 entidades (`calendar_items` com o status literal do Documento 03 §27, `publishing_slots` CRUD simples do usuário, `calendar_recommendations` guardando o balanço/conflitos calculados em código de cada rodada do Calendar Planner), o agente `calendar_planner` (Documento 05 §12, contrato sem `balance_report`/`conflicts` do agente — calculados em código, mesmo princípio da Fase 09), `app/services/calendar_balance.py` (funções puras testadas isoladamente), `CalendarPlanningService`, `CalendarItemService` (approve/reject/reschedule), `PublishingSlotService`, e a 7ª task Celery do projeto (`calendar.plan`, nunca auto-disparada, mesmo padrão de `channel.strategy`).
+- `content_projects` (Documento 03 §29) deliberadamente não criada nesta fase — pertence à Fase 11 (§120); `calendar_items.project_id` existe como coluna sem FK real ainda, mesmo padrão já usado para `generated_by_agent_run_id`.
+- Endpoints `POST /{id}/calendar/generate`, `GET /{id}/calendar`, `POST /{id}/calendar/{item_id}/approve`/`reject`/`reschedule`, `POST`/`GET /{id}/publishing-slots`. Frontend ganhou o bloco "Calendário" (cards com título/badge de status/data/formato e botões Aprovar/Rejeitar/Mover só para itens sugeridos/planejados) e botão "Gerar calendário", atendendo ao critério de aceite literal do Documento 10 ("ver calendário sugerido, aprovar item, rejeitar, mover").
+- 185 testes de backend passando; `ruff`/`mypy`/`eslint`/`tsc`/`next build` limpos. Fluxo completo validado via `curl` contra a stack Docker real (ideias aprovadas → gerar calendário → worker processou `calendar.plan` → itens sugeridos corretos → aprovar/rejeitar/reagendar/publishing-slots funcionando).
+- **Cliques físicos no navegador confirmados novamente com sucesso** (terceira fase seguida, depois da instabilidade das Fases 07/08): "Gerar calendário" → bloco "Calendário" apareceu → preencheu o campo de data/hora e clicou "Mover" (confirmado no banco) → clicou "Aprovar" (badge mudou, botões de ação desapareceram). Mesmo detalhe operacional das Fases 09: precisou de `docker compose restart web` para o dev server pegar os arquivos novos.
+- Próximo passo: usuário decide se commita/envia a Fase 10 agora, e depois se seguimos para a Fase 11 — Workflow & Agent Engine ou fazemos a passada de refinamento estético já sinalizada.
+- Antes de perguntar sobre commit, notei que um novo documento havia aparecido em `/docs` durante a implementação: **Documento 08B — Visual Baseline V1**, com referências aprovadas do Google Stitch. Como ele cobre exatamente as duas telas recém-construídas (Ideias e Calendário), sinalizei o achado ao usuário antes de prosseguir, em vez de seguir direto para o pedido de commit.
+
+### 2026-08-20 — Retrofit Ideias e Calendário (Documento 08B) (mesma data, sessão seguinte)
+- Perguntado ao usuário como proceder diante do Documento 08B; escolheu **ler tudo e retrofitar Ideias+Calendário agora**, antes de commitar a Fase 10.
+- Lido o Documento 08B por completo (167 seções) e inspecionadas as referências do Stitch em `docs/design/reference/` — descoberto que `calendar.png` contém, na prática, o mesmo conteúdo de `ideas.png` (provável export duplicado do usuário); Calendário foi implementado a partir da especificação textual do documento, que tem prioridade sobre a imagem mesmo quando válida (§158).
+- `AppShell` reestruturado (nav principal Dashboard/Ideias/Calendário, Canais movido para nav utilitária inferior); 6 componentes novos (`PageHeader`, `FilterChips`, `OpportunityCard`, `CalendarItemCard`, `CalendarToolbar`, `EditorialCalendar`); 2 rotas novas (`/ideas`, `/calendar`) operando sobre o primeiro canal conectado do usuário (sem seletor de canal ainda); blocos "Ideias"/"Calendário" e seus botões de trigger removidos de `/channels`.
+- `eslint`/`tsc`/`next build` limpos. Validado no navegador real com cliques físicos: `/ideas` com os 3 cards reais e filtro por status funcionando; `/calendar` com a grade semanal de 7 colunas, aprovar/rejeitar/mover testados e confirmados no banco; `/channels` sem regressão.
+- Próximo passo: usuário decide se commita/envia a Fase 10 + o retrofit do Documento 08B juntos, e depois se seguimos para a Fase 11 ou para o refinamento visual completo já sinalizado.
+- Em vez de responder ao pedido de commit, usuário pediu diretamente: "a skin do sistema precisa ser refatorada e seguir as referencias como deve ficar, estrutura totalmente moderna igual as imagens deixadas" — sinal de que faltava o Dashboard, ainda no layout genérico da Fase 03.
+
+### 2026-08-20 — Skin refactor: Dashboard e AppShell (Documento 08B) (mesma data, sessão seguinte)
+- Reconstruído `/dashboard` seguindo a estrutura do Documento 08B (`Today`, `Channel Health`, `Needs Attention`, `Metrics`), substituindo cada elemento fabricado do Stitch por um equivalente com dado 100% real: "Status operacional" (4 checagens booleanas) no lugar do círculo 92/100 sem fórmula definida; 3 métricas reais (vídeos/ideias aprovadas/itens no calendário) no lugar de Views/Subs/OS Index, que exigiriam endpoints que não existem até a Fase 19.
+- `AppShell` ganhou o slot "AI Magic" (decorativo, por instrução explícita do próprio documento nesta fase) e o bloco de logo empilhado (nome + descritor). 2 componentes novos (`MetricCard`, `TodayContentItem`).
+- `eslint`/`next build` limpos. Validado no navegador real: todos os números do dashboard conferidos contra o banco para o canal de teste populado; "mcp_videos Studio" no topbar investigado e confirmado como o nome real da organização (não bug).
+- Próximo passo: confirmar com o usuário se esse resultado atende ao pedido, depois commitar Fase 10 + retrofit 08B + skin refactor juntos.
+- Usuário reportou que a skin ainda não tinha mudado na tela dele mesmo após reload — investigado e não era cache de navegador: o `web` no `docker-compose.yml` tem um volume anônimo separado em `/app/.next` (cache de build do Turbopack) que um `docker compose restart` sozinho não limpa. Corrigido recriando o container (`stop`/`rm`/`up --build`) e, a pedido do usuário, depois um `docker compose down && up --build` completo do stack inteiro (dados de dev confirmados intactos).
+- Usuário pediu para trocar a fonte padrão para **Poppins**. Ao investigar por que a fonte "ainda parecia antiga" mesmo após o container recriado, encontrado um bug real pré-existente: `--font-sans: var(--font-sans);` em `globals.css` era uma custom property autorreferente (inválida), então nenhuma fonte customizada (nem Geist, desde o retrofit do Documento 08A) jamais tinha renderizado de fato. Corrigido, e confirmado via `getComputedStyle` no navegador real que Poppins agora resolve corretamente.
+- Aproveitada a rodada para escurecer a paleta dark, remover bordas visíveis dos `Card`s (shadow em vez de ring), simplificar o score do `OpportunityCard`, dar um gradiente real ao "AI Magic", e aumentar o peso da tipografia — tudo documentado na seção 4.14.
+- Usuário pediu para commitar e enviar tudo.
 
 ---
 

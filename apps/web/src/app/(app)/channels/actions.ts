@@ -5,9 +5,13 @@ import { redirect } from "next/navigation";
 
 import { getSessionToken } from "@/lib/session-cookie";
 import {
+  approveCalendarItem,
   approveChannelIdea,
   approveChannelStrategy,
   disconnectChannel,
+  rejectCalendarItem,
+  rescheduleCalendarItem,
+  triggerCalendarGeneration,
   triggerChannelAnalysis,
   triggerChannelDNAGeneration,
   triggerChannelStrategyGeneration,
@@ -118,7 +122,7 @@ export async function triggerIdeaGenerationAction(formData: FormData): Promise<v
   }
 
   await triggerIdeaGeneration(token, channelId);
-  revalidatePath("/channels");
+  revalidatePath("/ideas");
 }
 
 export async function approveIdeaAction(formData: FormData): Promise<void> {
@@ -134,5 +138,74 @@ export async function approveIdeaAction(formData: FormData): Promise<void> {
   }
 
   await approveChannelIdea(token, channelId, ideaId);
-  revalidatePath("/channels");
+  revalidatePath("/ideas");
+}
+
+export async function triggerCalendarGenerationAction(formData: FormData): Promise<void> {
+  const token = await getSessionToken();
+  if (!token) {
+    redirect("/login");
+  }
+
+  const channelId = String(formData.get("channel_id") ?? "");
+  if (!channelId) {
+    return;
+  }
+
+  await triggerCalendarGeneration(token, channelId);
+  revalidatePath("/calendar");
+}
+
+export async function approveCalendarItemAction(formData: FormData): Promise<void> {
+  const token = await getSessionToken();
+  if (!token) {
+    redirect("/login");
+  }
+
+  const channelId = String(formData.get("channel_id") ?? "");
+  const itemId = String(formData.get("item_id") ?? "");
+  if (!channelId || !itemId) {
+    return;
+  }
+
+  await approveCalendarItem(token, channelId, itemId);
+  revalidatePath("/calendar");
+}
+
+export async function rejectCalendarItemAction(formData: FormData): Promise<void> {
+  const token = await getSessionToken();
+  if (!token) {
+    redirect("/login");
+  }
+
+  const channelId = String(formData.get("channel_id") ?? "");
+  const itemId = String(formData.get("item_id") ?? "");
+  if (!channelId || !itemId) {
+    return;
+  }
+
+  await rejectCalendarItem(token, channelId, itemId);
+  revalidatePath("/calendar");
+}
+
+export async function rescheduleCalendarItemAction(formData: FormData): Promise<void> {
+  const token = await getSessionToken();
+  if (!token) {
+    redirect("/login");
+  }
+
+  const channelId = String(formData.get("channel_id") ?? "");
+  const itemId = String(formData.get("item_id") ?? "");
+  const plannedAtLocal = String(formData.get("planned_at") ?? "");
+  if (!channelId || !itemId || !plannedAtLocal) {
+    return;
+  }
+
+  const plannedAt = new Date(plannedAtLocal);
+  if (Number.isNaN(plannedAt.getTime())) {
+    return;
+  }
+
+  await rescheduleCalendarItem(token, channelId, itemId, plannedAt.toISOString());
+  revalidatePath("/calendar");
 }

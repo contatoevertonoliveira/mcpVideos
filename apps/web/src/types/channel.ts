@@ -95,3 +95,25 @@ export interface ContentIdeaSummary {
   opportunity_score: number | null;
   reasoning_summary: string | null;
 }
+
+export type CalendarItemStatus =
+  | "suggested"
+  | "planned"
+  | "approved"
+  | "producing"
+  | "ready"
+  | "scheduled"
+  | "published"
+  | "cancelled";
+
+export interface CalendarItemSummary {
+  id: string;
+  channel_id: string;
+  idea_id: string | null;
+  content_type: "short" | "long_form" | "live" | "unknown";
+  planned_at: string;
+  status: CalendarItemStatus;
+  source: "ai" | "user";
+  created_at: string;
+  idea_title: string | null;
+}

@@ -1,10 +1,16 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist_Mono, Poppins } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
+// Poppins is the app's default typeface (Documento 08B sec. 15: geometric
+// sans, matches the Stitch baseline's headline weight/character better than
+// Geist). Kept on the same "--font-geist-sans" CSS variable name so
+// globals.css's --font-sans -> --font-geist-sans mapping (@theme inline)
+// needs no changes.
+const bodyFont = Poppins({
   variable: "--font-geist-sans",
   subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
 });
 
 const geistMono = Geist_Mono({
@@ -33,7 +39,14 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="pt-BR"
-      className={`dark ${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`dark ${bodyFont.variable} ${geistMono.variable} h-full antialiased`}
+      // The no-FOUC script below removes "dark" before paint when the user
+      // has saved a light preference, which legitimately makes the real DOM
+      // disagree with this element's initial server-rendered className.
+      // That's the intended behavior, not a bug - suppress React's
+      // hydration warning for it instead of letting it misreport a real
+      // defect (same fix pattern used by next-themes for this exact case).
+      suppressHydrationWarning
     >
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />

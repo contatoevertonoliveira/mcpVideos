@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
+from datetime import UTC, datetime, timedelta
 from typing import Any, TypeVar
 
 import httpx
@@ -138,6 +139,27 @@ class FakeLLMGateway(LLMGateway):
                 _FAKE_OPPORTUNITY_SCORES_POOR if is_trend_chasing else _FAKE_OPPORTUNITY_SCORES_GOOD
             )
             return response_model.model_validate(evaluator_canned)
+
+        if prompt_id == "calendar_planner.v1":
+            # Content-sensitive on purpose, same precedent as
+            # opportunity_evaluator.v1 above: recommended_items must
+            # reference real opportunity_id values from THIS call's
+            # candidates, which a static canned response can't know ahead
+            # of time (unlike idea_agent.v1, which never needs to
+            # reference an existing id).
+            payload = json.loads(user_prompt)
+            candidates = payload.get("approved_opportunities", [])
+            base = datetime.now(UTC).replace(hour=15, minute=0, second=0, microsecond=0)
+            recommended_items = [
+                {
+                    "opportunity_id": candidate["opportunity_id"],
+                    "planned_at": (base + timedelta(days=index + 1)).isoformat(),
+                    "format": candidate.get("recommended_format") or "short",
+                    "reason": "Espacado conforme a frequencia recomendada da estrategia ativa.",
+                }
+                for index, candidate in enumerate(candidates)
+            ]
+            return response_model.model_validate({"recommended_items": recommended_items})
 
         canned = _CANNED_RESPONSES.get(prompt_id)
         if canned is None:

@@ -1,6 +1,6 @@
 # Design System — mcp_videos
 
-> Segue o Documento 08A (Direção Visual, Design System e Linguagem Futurista). Atualizar sempre que tokens ou componentes mudarem.
+> Segue o Documento 08A (Direção Visual, Design System e Linguagem Futurista) e o Documento 08B (Visual Baseline V1, referências do Stitch em `docs/design/reference/`). Atualizar sempre que tokens ou componentes mudarem.
 
 ## Filosofia
 
@@ -70,8 +70,19 @@ Base primitives em `apps/web/src/components/ui/` (shadcn + `@base-ui/react`): `B
 
 ### Layout shell
 
-- `AppShell` (`apps/web/src/components/app-shell.tsx`): sidebar fixa (desktop) + topbar + nav horizontal compacta (mobile) + área de conteúdo. Usado pelo layout do route group `(app)` — todas as páginas autenticadas (`/dashboard`, `/channels`) ficam dentro dele automaticamente.
+- `AppShell` (`apps/web/src/components/app-shell.tsx`): sidebar fixa (desktop) + topbar + nav horizontal compacta (mobile) + área de conteúdo. Usado pelo layout do route group `(app)` — todas as páginas autenticadas ficam dentro dele automaticamente. Nav principal: Dashboard/Ideias/Calendário (Documento 08B §9); nav utilitária inferior: Canais.
 - `ThemeToggle` (`apps/web/src/components/theme-toggle.tsx`): alterna `dark`/`light`, persiste em `localStorage`. Renderizado client-only (`next/dynamic` com `ssr:false`) para não conflitar com o script anti-FOUC.
+- `PageHeader` (`apps/web/src/components/page-header.tsx`): título + subtítulo opcional + slot de ação primária à direita (Documento 08B §14).
+- Slot **"AI Magic"** dentro do `AppShell`: `<div>` não-interativo com glow (`--shadow-glow-primary`) — visual apenas, por instrução do Documento 08B §10-11 de não implementar funcionalidade prematuramente.
+- `MetricCard` (`metric-card.tsx`): label + valor numérico grande + hint opcional — usado no Dashboard, sempre com dados reais (nunca fabricar o valor).
+- `TodayContentItem` (`today-content-item.tsx`): hora + badge de formato + título + badge de status, para o card "Hoje" do Dashboard.
+
+### Componentes de produto (Documento 08B)
+
+- `OpportunityCard` (`opportunity-card.tsx`): card de ideia — score (`getOpportunityScoreVariant`, nunca cor fixa no componente, Documento 08B §37), badge de formato, título/resumo, pilar/fonte, callout "Por quê" com borda colorida, ação "Adicionar ao calendário" (só quando `status === "recommended"`) ou badge de status persistente.
+- `FilterChips` (`filter-chips.tsx`): tabs de filtro via `<Link>`+searchParam (sem client JS) — usado em `/ideas` para status (adaptação do Documento 08B §34, que usa categorias de tópico que não existem no domínio real do produto).
+- `CalendarItemCard` (`calendar-item-card.tsx`): tratamento tracejado + badge "IA" para sugestões não decididas (Documento 08B §47-48) vs. borda sólida + rail de status colorido para itens já aprovados/rejeitados (§46). Ações Aprovar/Rejeitar sempre; Mover (reagendar) apenas fora do modo compacto (grid semanal).
+- `CalendarToolbar` (`calendar-toolbar.tsx`) + `EditorialCalendar` (`editorial-calendar.tsx`): toggle Semana/Lista com navegação de semana via link, grid de 7 colunas para a visualização semanal (Documento 08B §42-44). "Mês" não implementado (ver `docs/ui.md`, decisão de escopo).
 
 ### Ainda não implementados (Documento 08A §148, lista completa de primitives)
 

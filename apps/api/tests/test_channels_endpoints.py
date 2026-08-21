@@ -651,3 +651,182 @@ def test_approve_idea(client, db_session):
 
     assert response.status_code == 200
     assert response.json()["status"] == "approved"
+
+
+def test_list_calendar_before_generation_is_empty(client, db_session):
+    token = _register_and_get_token(client)
+    channel = _connect_channel(client, token)
+
+    response = client.get(
+        f"/api/v1/channels/{channel['id']}/calendar", headers=_auth_headers(token)
+    )
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_trigger_calendar_generation_unknown_channel_returns_404(client):
+    token = _register_and_get_token(client)
+
+    response = client.post(
+        f"/api/v1/channels/{uuid.uuid4()}/calendar/generate", headers=_auth_headers(token)
+    )
+
+    assert response.status_code == 404
+
+
+def _seed_channel_with_approved_ideas(client, db_session, token: str) -> dict:
+    import asyncio
+
+    from app.gateways.llm import FakeLLMGateway
+    from app.gateways.youtube import FakeYouTubeGateway
+    from app.models.enums import IdeaStatus, SyncType
+    from app.services.channel_dna import ChannelDNAService
+    from app.services.channel_strategy import ChannelStrategyService
+    from app.services.channel_sync import ChannelSyncService
+    from app.services.content_idea import ContentIdeaService
+    from app.services.idea_generation import IdeaGenerationService
+    from app.services.opportunity_evaluation import OpportunityEvaluationService
+
+    channel = _connect_channel(client, token)
+    channel_id = uuid.UUID(channel["id"])
+    organization_id = uuid.UUID(channel["organization_id"])
+    me = client.get("/api/v1/auth/me", headers=_auth_headers(token)).json()
+    user_id = uuid.UUID(me["user"]["id"])
+
+    async def _seed():
+        await ChannelSyncService(db_session, gateway=FakeYouTubeGateway()).run_sync(
+            channel_id=channel_id, organization_id=organization_id, sync_type=SyncType.MANUAL
+        )
+        await ChannelDNAService(db_session, llm_gateway=FakeLLMGateway()).generate_new_version(
+            channel_id=channel_id, organization_id=organization_id
+        )
+        strategy_service = ChannelStrategyService(db_session, llm_gateway=FakeLLMGateway())
+        strategy = await strategy_service.generate_new_version(
+            channel_id=channel_id, organization_id=organization_id
+        )
+        strategy_service.approve(
+            channel_id=channel_id,
+            strategy_id=strategy.id,
+            organization_id=organization_id,
+            user_id=user_id,
+        )
+        ideas = await IdeaGenerationService(
+            db_session, llm_gateway=FakeLLMGateway()
+        ).generate_ideas(channel_id=channel_id, organization_id=organization_id)
+        evaluation_service = OpportunityEvaluationService(db_session, llm_gateway=FakeLLMGateway())
+        for idea in ideas:
+            await evaluation_service.evaluate_idea(idea_id=idea.id, organization_id=organization_id)
+
+        idea_service = ContentIdeaService(db_session)
+        for idea in ideas:
+            if idea.status == IdeaStatus.RECOMMENDED:
+                idea_service.approve(
+                    channel_id=channel_id,
+                    idea_id=idea.id,
+                    organization_id=organization_id,
+                    user_id=user_id,
+                )
+
+    asyncio.run(_seed())
+    return channel
+
+
+def test_trigger_calendar_generation_creates_job(client, db_session):
+    token = _register_and_get_token(client)
+    channel = _seed_channel_with_approved_ideas(client, db_session, token)
+
+    response = client.post(
+        f"/api/v1/channels/{channel['id']}/calendar/generate", headers=_auth_headers(token)
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "job_id" in body
+    assert "correlation_id" in body
+
+
+def test_calendar_list_approve_reject_reschedule_flow(client, db_session):
+    import asyncio
+
+    from app.gateways.llm import FakeLLMGateway
+    from app.services.calendar_planning import CalendarPlanningService
+
+    token = _register_and_get_token(client)
+    channel = _seed_channel_with_approved_ideas(client, db_session, token)
+    channel_id = uuid.UUID(channel["id"])
+    organization_id = uuid.UUID(channel["organization_id"])
+
+    # The HTTP /calendar/generate endpoint only dispatches a Celery task
+    # (mocked out in tests, same as every other *.generate endpoint) - the
+    # service is called directly here to actually populate the calendar,
+    # exactly like the Ideas endpoint tests seed via IdeaGenerationService
+    # directly rather than through the HTTP trigger.
+    asyncio.run(
+        CalendarPlanningService(db_session, llm_gateway=FakeLLMGateway()).generate_recommendations(
+            channel_id=channel_id, organization_id=organization_id
+        )
+    )
+
+    list_response = client.get(
+        f"/api/v1/channels/{channel['id']}/calendar", headers=_auth_headers(token)
+    )
+    assert list_response.status_code == 200
+    items = list_response.json()
+    assert len(items) >= 1
+    for item in items:
+        assert item["status"] == "suggested"
+        assert item["source"] == "ai"
+        assert item["idea_title"]
+
+    first_item_id = items[0]["id"]
+    approve_response = client.post(
+        f"/api/v1/channels/{channel['id']}/calendar/{first_item_id}/approve",
+        headers=_auth_headers(token),
+    )
+    assert approve_response.status_code == 200
+    assert approve_response.json()["status"] == "approved"
+
+    if len(items) > 1:
+        second_item_id = items[1]["id"]
+        reject_response = client.post(
+            f"/api/v1/channels/{channel['id']}/calendar/{second_item_id}/reject",
+            headers=_auth_headers(token),
+        )
+        assert reject_response.status_code == 200
+        assert reject_response.json()["status"] == "cancelled"
+
+    new_planned_at = "2027-01-15T15:00:00+00:00"
+    reschedule_response = client.post(
+        f"/api/v1/channels/{channel['id']}/calendar/{first_item_id}/reschedule",
+        headers=_auth_headers(token),
+        json={"planned_at": new_planned_at},
+    )
+    assert reschedule_response.status_code == 200
+    assert reschedule_response.json()["planned_at"].startswith("2027-01-15T15:00:00")
+
+
+def test_publishing_slots_create_and_list(client):
+    token = _register_and_get_token(client)
+    channel = _connect_channel(client, token)
+
+    create_response = client.post(
+        f"/api/v1/channels/{channel['id']}/publishing-slots",
+        headers=_auth_headers(token),
+        json={
+            "day_of_week": "monday",
+            "local_time": "10:00:00",
+            "content_type": "short",
+            "priority": 1,
+        },
+    )
+    assert create_response.status_code == 200
+    assert create_response.json()["day_of_week"] == "monday"
+
+    list_response = client.get(
+        f"/api/v1/channels/{channel['id']}/publishing-slots", headers=_auth_headers(token)
+    )
+    assert list_response.status_code == 200
+    slots = list_response.json()
+    assert len(slots) == 1
+    assert slots[0]["content_type"] == "short"

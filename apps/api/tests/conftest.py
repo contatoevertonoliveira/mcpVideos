@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.redis import get_redis_client
 from app.db.session import get_db
 from app.main import app
+from app.tasks import calendar_planning as calendar_planning_tasks
 from app.tasks import channel_dna as channel_dna_tasks
 from app.tasks import channel_intelligence as channel_intelligence_tasks
 from app.tasks import channel_strategy as channel_strategy_tasks
@@ -47,6 +48,9 @@ def no_celery_dispatch(monkeypatch):
         opportunity_evaluation_tasks.run_opportunity_evaluation_task, "delay", MagicMock()
     )
     monkeypatch.setattr(idea_generation_tasks.run_idea_generation_task, "delay", MagicMock())
+    monkeypatch.setattr(
+        calendar_planning_tasks.run_calendar_planning_task, "delay", MagicMock()
+    )
 
 
 @pytest.fixture(scope="session")

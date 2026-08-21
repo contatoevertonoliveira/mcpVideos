@@ -1,6 +1,6 @@
 "use client";
 
-import { LayoutDashboard, LogOut, Radio, Sparkles } from "lucide-react";
+import { CalendarDays, LayoutDashboard, Lightbulb, LogOut, Radio, Sparkles } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -16,10 +16,17 @@ const ThemeToggle = dynamic(
   { ssr: false, loading: () => <Button variant="ghost" size="icon" disabled aria-hidden /> },
 );
 
+// Documento 08B sec. 9: Dashboard/Ideas/Calendar/Content/Analytics as the
+// main nav, Channels/Settings/Profile as bottom utility nav. Content and
+// Analytics are omitted - those screens don't exist yet (same precedent as
+// the Documento 08A retrofit only listing pages that are actually built).
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/channels", label: "Canais", icon: Radio },
+  { href: "/ideas", label: "Ideias", icon: Lightbulb },
+  { href: "/calendar", label: "Calendário", icon: CalendarDays },
 ];
+
+const UTILITY_NAV_ITEMS = [{ href: "/channels", label: "Canais", icon: Radio }];
 
 export function AppShell({
   children,
@@ -40,16 +47,53 @@ export function AppShell({
     <div className="flex min-h-svh w-full">
       <aside className="hidden w-56 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:flex">
         <div className="flex h-14 items-center gap-2 px-4">
-          <span className="flex size-7 items-center justify-center rounded-lg bg-primary/15 text-primary">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
             <Sparkles className="size-4" />
           </span>
-          <span className="text-sm font-semibold tracking-tight text-sidebar-foreground">
-            mcp_videos
-          </span>
+          <div className="leading-tight">
+            <p className="text-sm font-semibold tracking-tight text-sidebar-foreground">
+              mcp_videos
+            </p>
+            <p className="text-[11px] text-sidebar-foreground/50">AI Automation</p>
+          </div>
         </div>
 
-        <nav className="flex flex-1 flex-col gap-1 px-3 py-2">
+        <nav className="flex flex-col gap-1 px-3 py-2">
           {NAV_ITEMS.map((item) => {
+            const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={
+                  "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors duration-(--duration-fast) " +
+                  (active
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground")
+                }
+              >
+                <Icon className="size-4" />
+                {item.label}
+              </Link>
+            );
+          })}
+        </nav>
+
+        <div className="flex-1 px-3 py-2">
+          {/* Documento 08B sec. 10-11: "AI Magic" is a visual-only slot in
+              this phase - "F01 deverá apenas preparar o componente visual.
+              Não implementar funcionalidade futura prematuramente." Kept as
+              a non-interactive div (not a <button>) so it never looks like
+              a dead click target. */}
+          <div className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-primary to-primary-secondary px-3 py-2.5 text-sm font-medium text-primary-foreground shadow-(--shadow-glow-primary) transition-shadow duration-(--duration-normal) hover:shadow-(--shadow-lg)">
+            <Sparkles className="size-4" />
+            AI Magic
+          </div>
+        </div>
+
+        <nav className="flex flex-col gap-1 border-t border-sidebar-border px-3 py-2">
+          {UTILITY_NAV_ITEMS.map((item) => {
             const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
             const Icon = item.icon;
             return (
@@ -99,7 +143,7 @@ export function AppShell({
         </header>
 
         <nav className="flex items-center gap-1 border-b border-border px-2 py-1.5 md:hidden">
-          {NAV_ITEMS.map((item) => {
+          {[...NAV_ITEMS, ...UTILITY_NAV_ITEMS].map((item) => {
             const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
             const Icon = item.icon;
             return (

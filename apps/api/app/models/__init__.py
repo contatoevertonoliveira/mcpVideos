@@ -1,6 +1,8 @@
 from app.models.audience_profile import AudienceProfile
 from app.models.audit_log import AuditLog
 from app.models.brand_profile import BrandProfile
+from app.models.calendar_item import CalendarItem
+from app.models.calendar_recommendation import CalendarRecommendation
 from app.models.channel import Channel
 from app.models.channel_connection import ChannelConnection
 from app.models.channel_dna_version import ChannelDNAVersion
@@ -17,6 +19,7 @@ from app.models.job import Job
 from app.models.opportunity_score import OpportunityScore
 from app.models.organization import Organization
 from app.models.organization_member import OrganizationMember
+from app.models.publishing_slot import PublishingSlot
 from app.models.session import UserSession
 from app.models.source_playlist import SourcePlaylist
 from app.models.source_video import SourceVideo
@@ -28,6 +31,8 @@ __all__ = [
     "AudienceProfile",
     "AuditLog",
     "BrandProfile",
+    "CalendarItem",
+    "CalendarRecommendation",
     "Channel",
     "ChannelConnection",
     "ChannelDNAVersion",
@@ -44,6 +49,7 @@ __all__ = [
     "OpportunityScore",
     "Organization",
     "OrganizationMember",
+    "PublishingSlot",
     "SourcePlaylist",
     "SourceVideo",
     "SourceVideoMetric",

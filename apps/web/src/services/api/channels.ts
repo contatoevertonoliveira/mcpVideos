@@ -2,6 +2,7 @@ import "server-only";
 
 import { getApiInternalUrl } from "@/lib/env";
 import type {
+  CalendarItemSummary,
   ChannelDNA,
   ChannelIntelligence,
   ChannelStrategyStatus,
@@ -202,6 +203,67 @@ export async function approveChannelIdea(
   await fetch(`${getApiInternalUrl()}/api/v1/channels/${channelId}/ideas/${ideaId}/approve`, {
     method: "POST",
     headers: authHeaders(token),
+    cache: "no-store",
+  }).catch(() => undefined);
+}
+
+export async function triggerCalendarGeneration(token: string, channelId: string): Promise<void> {
+  await fetch(`${getApiInternalUrl()}/api/v1/channels/${channelId}/calendar/generate`, {
+    method: "POST",
+    headers: authHeaders(token),
+    cache: "no-store",
+  }).catch(() => undefined);
+}
+
+export async function listChannelCalendar(
+  token: string,
+  channelId: string,
+): Promise<CalendarItemSummary[]> {
+  const response = await fetch(`${getApiInternalUrl()}/api/v1/channels/${channelId}/calendar`, {
+    headers: authHeaders(token),
+    cache: "no-store",
+  }).catch(() => null);
+
+  if (!response || !response.ok) {
+    return [];
+  }
+  return (await response.json()) as CalendarItemSummary[];
+}
+
+export async function approveCalendarItem(
+  token: string,
+  channelId: string,
+  itemId: string,
+): Promise<void> {
+  await fetch(`${getApiInternalUrl()}/api/v1/channels/${channelId}/calendar/${itemId}/approve`, {
+    method: "POST",
+    headers: authHeaders(token),
+    cache: "no-store",
+  }).catch(() => undefined);
+}
+
+export async function rejectCalendarItem(
+  token: string,
+  channelId: string,
+  itemId: string,
+): Promise<void> {
+  await fetch(`${getApiInternalUrl()}/api/v1/channels/${channelId}/calendar/${itemId}/reject`, {
+    method: "POST",
+    headers: authHeaders(token),
+    cache: "no-store",
+  }).catch(() => undefined);
+}
+
+export async function rescheduleCalendarItem(
+  token: string,
+  channelId: string,
+  itemId: string,
+  plannedAt: string,
+): Promise<void> {
+  await fetch(`${getApiInternalUrl()}/api/v1/channels/${channelId}/calendar/${itemId}/reschedule`, {
+    method: "POST",
+    headers: { ...authHeaders(token), "Content-Type": "application/json" },
+    body: JSON.stringify({ planned_at: plannedAt }),
     cache: "no-store",
   }).catch(() => undefined);
 }

@@ -19,7 +19,13 @@
   --color-danger-foreground: var(--danger-foreground);
   --color-info: var(--info);
   --color-info-foreground: var(--info-foreground);
-  --font-sans: var(--font-sans);
+  /* Bug fix: this was self-referential ("--font-sans: var(--font-sans)"),
+     an invalid CSS custom property cycle that silently fell back to the
+     browser default instead of Poppins (or Geist before it) - it needs to
+     point at the actual next/font variable, same pattern as --font-mono
+     below. This means custom fonts never rendered in this app at all
+     until now, not since the Documento 08A retrofit. */
+  --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
@@ -47,6 +53,7 @@
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
   --color-primary: var(--primary);
+  --color-primary-secondary: var(--primary-secondary);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
@@ -82,6 +89,7 @@
   --popover-foreground: oklch(0.19 0.012 264);
   --primary: oklch(0.54 0.19 275);
   --primary-foreground: oklch(0.99 0.005 275);
+  --primary-secondary: oklch(0.5 0.2 305);
   --secondary: oklch(0.94 0.006 264);
   --secondary-foreground: oklch(0.19 0.012 264);
   --muted: oklch(0.95 0.005 264);
@@ -123,17 +131,25 @@
 }
 
 .dark {
-  --background: oklch(0.15 0.012 264);
-  --foreground: oklch(0.96 0.004 264);
-  --surface: oklch(0.19 0.014 264);
-  --surface-elevated: oklch(0.235 0.016 264);
-  --surface-hover: oklch(0.215 0.015 264);
-  --card: oklch(0.19 0.014 264);
-  --card-foreground: oklch(0.96 0.004 264);
-  --popover: oklch(0.235 0.016 264);
-  --popover-foreground: oklch(0.96 0.004 264);
+  /* Documento 08B sec. 18/125: near-black graphite/navy background, never
+     pure #000 - deliberately darker than the first 08A pass (0.15 -> 0.11)
+     to match the Stitch baseline's much higher contrast between background
+     and surface than the original retrofit had. */
+  --background: oklch(0.11 0.012 264);
+  --foreground: oklch(0.97 0.004 264);
+  --surface: oklch(0.155 0.014 264);
+  --surface-elevated: oklch(0.195 0.016 264);
+  --surface-hover: oklch(0.18 0.015 264);
+  --card: oklch(0.155 0.014 264);
+  --card-foreground: oklch(0.97 0.004 264);
+  --popover: oklch(0.195 0.016 264);
+  --popover-foreground: oklch(0.97 0.004 264);
   --primary: oklch(0.65 0.2 275);
   --primary-foreground: oklch(0.99 0.005 275);
+  /* Second stop for the "AI Magic" gradient (Documento 08B sec. 10: "blue
+     -> violet subtle gradient") - a neighboring violet hue of --primary,
+     not a hardcoded hex, so the gradient stays token-driven. */
+  --primary-secondary: oklch(0.58 0.22 305);
   --secondary: oklch(0.24 0.015 264);
   --secondary-foreground: oklch(0.96 0.004 264);
   --muted: oklch(0.22 0.014 264);
@@ -158,11 +174,11 @@
   --chart-3: oklch(0.78 0.14 80);
   --chart-4: oklch(0.68 0.14 230);
   --chart-5: oklch(0.62 0.21 25);
-  --sidebar: oklch(0.125 0.012 264);
+  --sidebar: oklch(0.085 0.012 264);
   --sidebar-foreground: oklch(0.96 0.004 264);
   --sidebar-primary: oklch(0.65 0.2 275);
   --sidebar-primary-foreground: oklch(0.99 0.005 275);
-  --sidebar-accent: oklch(0.22 0.03 270);
+  --sidebar-accent: oklch(0.24 0.035 275);
   --sidebar-accent-foreground: oklch(0.97 0.01 275);
   --sidebar-border: oklch(1 0 0 / 8%);
   --sidebar-ring: oklch(0.65 0.2 275);

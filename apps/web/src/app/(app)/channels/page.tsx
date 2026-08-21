@@ -6,40 +6,18 @@ import {
   getChannelDNA,
   getChannelIntelligence,
   getChannelStrategyStatus,
-  listChannelIdeas,
   listChannels,
   listChannelVideos,
 } from "@/services/api/channels";
 
 import {
-  approveIdeaAction,
   approveStrategyAction,
   disconnectChannelAction,
   triggerAnalysisAction,
   triggerDNAGenerationAction,
-  triggerIdeaGenerationAction,
   triggerStrategyGenerationAction,
   triggerSyncAction,
 } from "./actions";
-
-function ideaStatusVariant(status: string): "success" | "destructive" | "outline" | "info" {
-  if (status === "recommended" || status === "approved") return "success";
-  if (status === "rejected") return "destructive";
-  if (status === "evaluating") return "info";
-  return "outline";
-}
-
-function ideaStatusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    draft: "Rascunho",
-    evaluating: "Avaliando",
-    recommended: "Recomendada",
-    rejected: "Rejeitada",
-    approved: "Aprovada",
-    archived: "Arquivada",
-  };
-  return labels[status] ?? status;
-}
 
 function formatLastSynced(lastSyncedAt: string | null): string {
   if (!lastSyncedAt) {
@@ -80,7 +58,6 @@ export default async function ChannelsPage(props: PageProps<"/channels">) {
   const strategy = await Promise.all(
     channels.map((channel) => getChannelStrategyStatus(token, channel.id)),
   );
-  const ideas = await Promise.all(channels.map((channel) => listChannelIdeas(token, channel.id)));
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 p-6 md:p-8">
@@ -147,12 +124,6 @@ export default async function ChannelsPage(props: PageProps<"/channels">) {
                         <input type="hidden" name="channel_id" value={channel.id} />
                         <Button type="submit" variant="outline" size="sm">
                           Gerar estratégia
-                        </Button>
-                      </form>
-                      <form action={triggerIdeaGenerationAction}>
-                        <input type="hidden" name="channel_id" value={channel.id} />
-                        <Button type="submit" variant="outline" size="sm">
-                          Gerar ideias
                         </Button>
                       </form>
                       <form action={disconnectChannelAction}>
@@ -286,47 +257,6 @@ export default async function ChannelsPage(props: PageProps<"/channels">) {
                         Aprovar estratégia
                       </Button>
                     </form>
-                  </div>
-                )}
-                {!!ideas[index].length && (
-                  <div className="mt-1 rounded-lg border border-border bg-surface p-3">
-                    <p className="text-xs font-medium uppercase tracking-wide text-foreground">
-                      Ideias de conteúdo
-                    </p>
-                    <div className="mt-2 flex flex-col gap-2">
-                      {ideas[index].map((idea) => (
-                        <div
-                          key={idea.id}
-                          className="rounded-lg border border-border bg-background p-3"
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="font-medium text-foreground">{idea.title}</p>
-                            <Badge variant={ideaStatusVariant(idea.status)}>
-                              {ideaStatusLabel(idea.status)}
-                            </Badge>
-                          </div>
-                          <p className="mt-1 text-xs">
-                            {idea.opportunity_score !== null
-                              ? `Score ${idea.opportunity_score.toFixed(1)}`
-                              : "Ainda não avaliada"}
-                            {idea.recommended_format && ` · ${idea.recommended_format}`}
-                          </p>
-                          {idea.summary && <p className="mt-1">{idea.summary}</p>}
-                          {idea.reasoning_summary && (
-                            <p className="mt-1 italic">{idea.reasoning_summary}</p>
-                          )}
-                          {idea.status === "recommended" && (
-                            <form action={approveIdeaAction} className="mt-2">
-                              <input type="hidden" name="channel_id" value={channel.id} />
-                              <input type="hidden" name="idea_id" value={idea.id} />
-                              <Button type="submit" variant="outline" size="sm">
-                                Adicionar
-                              </Button>
-                            </form>
-                          )}
-                        </div>
-                      ))}
-                    </div>
                   </div>
                 )}
               </CardContent>
