@@ -8,9 +8,9 @@
 
 ## 1. Status Geral
 
-**Fase atual:** ✅ **Fase 11 — Workflow & Agent Engine** (seção 4.15) implementada e validada nesta sessão, prestes a ser commitada a pedido do usuário. Fase 10 + retrofit Documento 08B (Ideias/Calendário/Dashboard/AppShell/tokens/fonte) já commitados (`4958fe1`) antes desta sessão. Fases 01-10 + retrofits visuais (Documentos 08A/08B) 100% validados e commitados (seções 4.1-4.14).
+**Fase atual:** ✅ **Fase 11 — Workflow & Agent Engine** (seção 4.15) implementada, validada e commitada nesta sessão (`3689f81`). Fase 10 + retrofit Documento 08B (Ideias/Calendário/Dashboard/AppShell/tokens/fonte) já commitados (`4958fe1`) antes desta sessão. Fases 01-11 + retrofits visuais (Documentos 08A/08B) 100% validados e commitados (seções 4.1-4.15).
 
-**Próximo passo:** commit/push da Fase 11 pendente de confirmação do usuário; depois decidir entre iniciar a **Fase 12 — Script & Storyboard Engine** ou continuar aprofundando o refinamento visual (Login/Registro/Canais ainda não passaram por uma rodada específica do Documento 08B).
+**Próximo passo:** decidir entre iniciar a **Fase 12 — Script & Storyboard Engine** ou continuar aprofundando o refinamento visual (Login/Registro/Canais ainda não passaram por uma rodada específica do Documento 08B).
 
 ---
 
@@ -628,7 +628,7 @@ docker compose exec -e TEST_DATABASE_URL="postgresql+psycopg2://postgres:postgre
 
 ## 5. Pendências / Perguntas em Aberto
 
-- Fases 01-10 + retrofits visuais (Documentos 08A/08B) commitados e enviados para `main` (`b3041ae`, `ed9b437`, `7b54b9c`, `4e5ecdc`, `7675039`, `ecf72cd`, `b518bf6`, `6f37fe6`, `d402cdb`, `3f6bcb4`, `4958fe1`). **Fase 11 — Workflow & Agent Engine implementada e validada nesta sessão, commit pendente de confirmação do usuário.**
+- Fases 01-11 + retrofits visuais (Documentos 08A/08B) commitados e enviados para `main` (`b3041ae`, `ed9b437`, `7b54b9c`, `4e5ecdc`, `7675039`, `ecf72cd`, `b518bf6`, `6f37fe6`, `d402cdb`, `3f6bcb4`, `4958fe1`, `3689f81`).
 - Documento 10 (seção 137) sugere organizar os documentos em `/docs/master/` com slugs (`01-product-brief.md`, etc.) — não feito; usuário optou implicitamente por manter o padrão atual `Documento NN - Titulo.md` ao pedir para seguir direto para a Fase 01.
 - Ainda não definido: nome comercial do produto, provedor de IA/mídia real a integrar primeiro na Fase 13 (Documento 10 §71 pede benchmark atualizado antes de decidir — não assumir Higgsfield/Kie/fal.ai/WaveSpeed/Replicate como escolha final), moeda/plano de billing. Documento 08B §73 sugere "Creator OS" como placeholder visual interno, não como nome comercial definitivo.
 - Credenciais reais do Google Cloud (`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`) ainda não configuradas — usuário optou por seguir só com `FakeYouTubeGateway` por enquanto (Fase 04). `GoogleYouTubeGateway` está implementada e pronta (incluindo os métodos de import da Fase 05), mas nunca exercitada contra o Google real.
@@ -778,7 +778,8 @@ docker compose exec -e TEST_DATABASE_URL="postgresql+psycopg2://postgres:postgre
 - Migration `cc4e8f58bdea` gerada, revisada e aplicada (dev + teste) com ciclo `upgrade → downgrade → upgrade`. `ruff`/`mypy` limpos. 18 testes novos escritos (`test_agent_registry.py`, `test_workflow_engine.py`, `test_agent_runtime.py`, extensões em 3 arquivos existentes) — 203 testes de backend passando no total.
 - **Bug real encontrado durante a validação E2E via `curl` + consulta direta ao Postgres**: `workflow_run_id` não estava chegando aos `agent_runs` das etapas "intelligence"/"dna" (os services recebiam o parâmetro mas não o repassavam para os agentes) — quebrava silenciosamente o critério de aceite "trace operation". Corrigido em `ChannelIntelligenceService`/`ChannelDNAService`, com um teste novo em cada arquivo para prevenir regressão. Notado que os testes automatizados sozinhos não teriam pego isso na primeira versão (usavam um UUID solto em vez de um `WorkflowRun` real) — só a consulta direta ao banco durante o E2E revelou o problema.
 - **Nota operacional nova**: diferente do container `api` (uvicorn `--reload`), o `worker` do Celery não recarrega código sozinho sobre o bind mount — precisa de `docker compose restart worker` explícito após qualquer mudança de código do lado do worker, ou as tasks continuam rodando a versão antiga em memória (foi exatamente isso que causou um `TypeError` na primeira tentativa de validação E2E desta sessão).
-- Próximo passo: usuário decide se commita/envia a Fase 11 agora, e depois se seguimos para a Fase 12 — Script & Storyboard Engine.
+- Usuário pediu para commitar e enviar. Commit `3689f81` ("feat(F11): workflow & agent engine") criado e enviado para `main`.
+- Próximo passo: usuário decide se seguimos para a Fase 12 — Script & Storyboard Engine.
 
 ---
 
